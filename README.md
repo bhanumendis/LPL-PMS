@@ -34,6 +34,8 @@ There is no sample or seed data anywhere in the build. A new workspace starts em
 | `scripts/contrast.mjs` | Computes every token pair's contrast ratio from the stylesheet; `npm run build` runs it (and the typecheck) first and stops on any pair below AAA |
 | `supabase/schema.sql` | Tables, helper functions, row-level security mirroring the permission matrix, closed-registration trigger, case write guard |
 | `supabase/functions/admin-users/` | Edge Function through which administrators create sign-ins and set temporary passwords |
+| `.github/workflows/pages.yml` | Builds and publishes the test site to GitHub Pages on every push to `main` |
+| `LICENSE` | Ownership notice, all rights reserved |
 
 ## Theme
 
@@ -117,6 +119,37 @@ Alternatively, set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` at build tim
 
 **Never put the `service_role` key in the browser.** Only the anon key belongs here; it grants nothing on its own.
 
+After the first connection, disable "Allow new users to sign up" under Authentication → Providers → Email. The database already refuses public sign-ups; this is the second lock.
+
+## Deployment
+
+The build is one HTML file, so it can be hosted anywhere static files are served. Two arrangements are in use:
+
+- **Test site (GitHub Pages).** `.github/workflows/pages.yml` runs on every push to `main`: `npm ci`, then `npm run build` (typecheck and AAA contrast check first, so a failure blocks the deploy), then publishes `dist/` to Pages. Enable once per repository under Settings → Pages → Source: GitHub Actions. The current test site is https://bhanumendis.github.io/LPL-PMS/ from the `bhanumendis/LPL-PMS` repository. Without a connected server it runs in browser-storage mode; connect a Supabase project from Settings to test the real backend on the same URL.
+- **Deliverable.** `dist/LPL_Placement_Management_System.html` is the file handed over; it carries the version banner, the ownership notice and the Content-Security-Policy described below.
+
+Remotes on the development machine: `personal` → `bhanumendis/LPL-PMS` (test site), `origin` → the Lyceum organisation repository.
+
+## Hardening in the built file
+
+- **Content-Security-Policy** meta injected by `scripts/finalize.mjs`: every inline script is allowed by SHA-256 hash and nothing else may execute; styles are inline (React sets style attributes); images and fonts are `data:` URIs; network access is limited to `*.supabase.co` / `*.supabase.in`; `base-uri` and `form-action` are `none`.
+- **Error boundary** around the application (`src/main.tsx`): a render error in one view shows a recovery panel with "Back to start" and "Reload" instead of a blank page.
+- **Polling** asks `workspace_version()` (one row, computed under the caller's own row-level security) before downloading anything, and an unchanged poll re-renders nothing.
+- **Version** comes from `package.json` at build time (`__APP_VERSION__`) and is shown on the sign-in screen.
+
+## Ownership notice
+
+The copyright is recorded in every layer so that anyone inspecting the product, the source or the database sees it:
+
+| Where | How |
+|---|---|
+| Every source file (`.ts`, `.tsx`, `.css`, `.sql`, `.mjs`, `.yml`) | Header comment |
+| Built HTML | Banner comment at the top, `<meta name="author">` and `<meta name="copyright">` |
+| Minified JavaScript inside the built HTML | `/*! @license */` block preserved by the bundler (`esbuild.legalComments: "inline"`) |
+| Running application | `window.__LPL_PMS__` object and a console notice on start |
+| Database | `COMMENT ON TABLE` on every table in `supabase/schema.sql`, visible in the Table Editor, `psql \d+` and `pg_dump` |
+| Repository | `LICENSE` (all rights reserved) and `package.json` `author` / `license: UNLICENSED` |
+
 ## The nine stages
 
 The 31 steps remain the system of record, but nobody works with 31 items on screen. The pipeline groups them into the nine historical stages of the process document (§5); the cross-cutting three-month follow-up (X1, step 31) is presented inside stage 9 so the journey ends where the student does. In the case workspace the stages are an accordion: only the stage containing the current step is expanded by default, with the micro-steps underneath. The student journey uses the same nine stages.
@@ -142,3 +175,13 @@ Still needing a real machine and a real person: a screen-reader pass (NVDA or Vo
 ## Security note
 
 With no server, passwords are hashed client-side (SHA-256) and stored with the workspace. That is acceptable for a controlled walkthrough and **not** acceptable for anything internet-facing. Connect a server before real student data goes in.
+
+## Status and outstanding checks
+
+Production audit of 5 September 2026 (`LPL_PMS_v4_Production_Audit_2026-09-05.md` in the parent folder): typecheck clean, 93 token pairs at AAA in both themes, axe-core clean on 20 screens × 2 themes, 40 audit findings resolved.
+
+Still to be done by hand before real student data goes in:
+
+1. Exercise the Supabase path end to end on a real project (schema, Edge Function, bootstrap, create profile with sign-in, complete a step, Team Leader decision). The server code is consistent but has not yet run against a live Postgres.
+2. A screen-reader pass (NVDA or VoiceOver) through "complete a step" and the student profile form.
+3. Windows forced-colours mode on a real machine.
