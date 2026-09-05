@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="author" content="Bhanu Mendis" />
+    <meta name="copyright" content="© 2026 Bhanu Mendis. All rights reserved." />
+    <meta name="description" content="Lyceum Placements — Placement Management System. Staff and student sign-in." />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#ffffff" />
+    <title>Lyceum Placements — Placement Management System</title>
+    <script>
+      // Apply the appearance before first paint — the saved choice, else the system preference —
+      // so a dark session never flashes white. Mirrors readTheme() in src/App.tsx.
+      (function () {
+        var t = null;
+        try { t = localStorage.getItem("lpl:pms:theme"); } catch (e) {}
+        if (t !== "dark" && t !== "light") { try { t = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch (e) { t = "light"; } }
+        document.documentElement.setAttribute("data-theme", t);
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m) m.setAttribute("content", t === "dark" ? "#000000" : "#ffffff");
+      })();
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
