@@ -133,6 +133,10 @@ export const EVENTS = {
   backupExported: (): AuditEvent => ({ action: "Workspace backup exported", eventType: "export", entityType: "workspace", summary: "Exported a workspace backup" }),
   backupRestored: (fileName: string, counts?: Record<string, number>): AuditEvent => ({ action: "Workspace restored from backup", eventType: "system", entityType: "workspace", target: fileName, summary: `Restored the workspace from ${fileName}`, meta: counts }),
   workspaceReset: (): AuditEvent => ({ action: "Workspace reset", eventType: "system", entityType: "workspace", summary: "Reset the workspace" }),
+  /** The add/remove pair is audited under the real administrator, not under a sample account,
+      so the trail still shows who put demonstration records into the workspace and when. */
+  sampleDataAdded: (users: number, cases: number): AuditEvent => ({ action: "Sample data added", eventType: "system", entityType: "workspace", summary: `Added ${cases} sample cases and ${users} sample accounts`, meta: { users, cases } }),
+  sampleDataRemoved: (users: number, cases: number): AuditEvent => ({ action: "Sample data removed", eventType: "delete", entityType: "workspace", summary: `Removed ${cases} sample cases and ${users} sample accounts`, meta: { users, cases } }),
   serverConnected: (url: string): AuditEvent => ({ action: "Server connected", eventType: "system", entityType: "workspace", target: url, summary: `Connected to ${url}` }),
   serverDisconnected: (): AuditEvent => ({ action: "Server disconnected", eventType: "system", entityType: "workspace", summary: "Disconnected from the server" }),
 

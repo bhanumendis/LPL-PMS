@@ -13,6 +13,8 @@
 /* ---------- case workspace: nine-stage pipeline ---------- */
 .workspace { display: grid; grid-template-columns: 324px minmax(0, 1fr); gap: 18px; align-items: start; }
 @media (max-width: 1023px) { .workspace { grid-template-columns: 1fr; } }
+/* The spine held 324px from 1024px all the way to 2560px; give it room as the page grows. */
+@media (min-width: 1600px) { .workspace { grid-template-columns: 380px minmax(0, 1fr); gap: 24px; } }
 .spine { position: sticky; top: 78px; max-height: calc(100vh - 96px); overflow: auto; padding: 12px; }
 .pl-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 4px 10px; font-family: var(--ui); font-size: var(--fs-xs); color: var(--muted); }
 .pl-tools button { color: var(--accent-text); font-family: var(--ui); font-size: var(--fs-xs); font-weight: 600; padding: 4px 8px; border-radius: 8px; min-height: 44px; }
@@ -184,6 +186,10 @@ textarea.input.code { font-family: var(--mono); font-size: 13px; line-height: 1.
 .stat-strip.compact .stat { padding: 12px 14px; }
 .stat-strip.compact .stat-value { font-size: 24px; }
 @media (max-width: 1023px) { .home { grid-template-columns: 1fr; } .home-greeting h1 { font-size: 26px; } }
+/* Above 1440 the side column stops growing: extra width goes to the main column, which is
+   where the charts and queues live, rather than stretching a list of short rows. */
+@media (min-width: 1440px) { .home { grid-template-columns: minmax(0, 1fr) minmax(420px, 480px); gap: 22px; } }
+@media (min-width: 1800px) { .home { grid-template-columns: minmax(0, 1fr) minmax(460px, 520px); gap: 26px; } }
 
 /* attention queue */
 .attention { display: flex; flex-direction: column; gap: 14px; }
@@ -195,7 +201,7 @@ textarea.input.code { font-family: var(--mono); font-size: 13px; line-height: 1.
 @media (max-width: 640px) { .attention-row { grid-template-columns: auto minmax(0, 1fr); } .attention-act { grid-column: 1 / -1; justify-self: start; } }
 
 /* stage flow */
-.stage-flow { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 6px; height: 150px; align-items: end; }
+.stage-flow { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 6px; height: clamp(150px, 13vw, 240px); align-items: end; }
 .sf-item, .sf-btn { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; height: 100%; min-width: 0; }
 .sf-btn { width: 100%; border-radius: 10px; padding: 4px 0; transition: background var(--d-1); }
 .sf-btn:hover, .sf-btn[aria-pressed="true"] { background: var(--accent-soft); }
@@ -231,6 +237,7 @@ textarea.input.code { font-family: var(--mono); font-size: 13px; line-height: 1.
 .perf-cell h3 { font-size: 13px; color: var(--ink2); margin-bottom: 10px; }
 .perf-cell.span2 { grid-column: span 2; }
 @media (max-width: 1279px) { .perf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1600px) { .perf-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (max-width: 767px) { .perf-grid { grid-template-columns: 1fr; } .perf-cell.span2 { grid-column: auto; } }
 
 /* counsellor load */
@@ -336,14 +343,29 @@ textarea.input.code { font-family: var(--mono); font-size: 13px; line-height: 1.
 }
 @media (forced-colors: active) { .step-actions { background: Canvas; border-color: CanvasText; box-shadow: none; } }
 
-/* home greeting: a soft three-hue aurora behind the title, kept faint so text stays at AAA */
+/* home greeting: a soft three-hue aurora behind the title, kept faint so text stays at AAA.
+   It must have no edges. The earlier version was a plain 1320x220 rectangle whose colour was
+   still at full strength where the box stopped, so on any screen wider than the content column
+   it read as a tinted panel with three visible sides. The mask below is an ellipse inscribed in
+   the element, which drives alpha to exactly 0 at every point of the boundary (measured: 0/255 on
+   all four edges and all four corners), so the wash dissolves into the page instead of ending.
+   Keep the mask radius at 52%: the zero stop at 96% of 52% lands on 49.9%, i.e. just inside the
+   half-width and half-height. Raising it past 52% puts colour back on the edge. */
 .home-page { position: relative; isolation: isolate; }
 .home-page::before {
-  content: ""; position: absolute; z-index: -1; pointer-events: none; left: -24px; right: 0; top: -36px; height: 220px;
+  content: ""; position: absolute; z-index: -1; pointer-events: none;
+  /* -2% bleeds into the page gutter on both sides without ever exceeding .page, so no h-scroll */
+  inset-inline: -2%; top: -150px; height: 380px;
   background:
-    radial-gradient(38% 90% at 6% 0%, color-mix(in srgb, var(--hue-blue) 13%, transparent), transparent 70%),
-    radial-gradient(34% 80% at 42% 0%, color-mix(in srgb, var(--hue-violet) 10%, transparent), transparent 70%),
-    radial-gradient(30% 70% at 82% 0%, color-mix(in srgb, var(--hue-teal) 10%, transparent), transparent 70%);
+    radial-gradient(50% 55% at 18% 50%, color-mix(in srgb, var(--hue-blue) 16%, transparent), transparent 72%),
+    radial-gradient(46% 50% at 50% 46%, color-mix(in srgb, var(--hue-violet) 13%, transparent), transparent 72%),
+    radial-gradient(48% 52% at 82% 50%, color-mix(in srgb, var(--hue-teal) 13%, transparent), transparent 72%);
+  -webkit-mask-image: radial-gradient(52% 52% at 50% 50%, #000 0%, #000 34%, rgba(0, 0, 0, 0.55) 64%, transparent 96%);
+  mask-image: radial-gradient(52% 52% at 50% 50%, #000 0%, #000 34%, rgba(0, 0, 0, 0.55) 64%, transparent 96%);
+}
+/* Without masking the wash would be a hard-edged box again, so drop it rather than show the box. */
+@supports not ((mask-image: radial-gradient(#000, transparent)) or (-webkit-mask-image: radial-gradient(#000, transparent))) {
+  .home-page::before { display: none; }
 }
 .home-greeting h1 { background: linear-gradient(90deg, var(--ink), color-mix(in srgb, var(--hue-indigo-text) 70%, var(--ink))); -webkit-background-clip: text; background-clip: text; color: transparent; }
 @media (forced-colors: active) { .home-page::before { display: none; } .home-greeting h1 { background: none; color: CanvasText; } }

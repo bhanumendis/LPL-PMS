@@ -91,6 +91,12 @@
 
   /* v5: spacing, radius, motion, layers */
   --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px; --s-6: 24px; --s-7: 32px; --s-8: 40px;
+  /* The content measure. The page and the utility bar both resolve against these, so the
+     brand and the avatar line up with the first and last pixel of the page content instead
+     of sitting against the screen edges while the content sits far inboard. */
+  --page-max: 1720px;
+  --page-gutter: clamp(24px, 2.6vw, 56px);
+  --rail-w: 76px;
   --r-pill: 999px;
   --d-1: 120ms; --d-2: 200ms; --d-3: 320ms; --d-4: 480ms; --d-chart: 900ms;
   --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
