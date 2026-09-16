@@ -9,17 +9,23 @@ import { useSession } from "@/App";
 import { store } from "@/lib/store";
 import { STEP_BY_N } from "@/lib/spine";
 import { decideGate, fmtDateTime, fmtDate, slaFlags, latestGate, docsForStep, currentStep, daysSince } from "@/lib/logic";
-import { Panel, Pill, Empty, Modal, useToast, statusTone, Avatar, TextArea, Kpi, Notice } from "@/lib/ui";
+import { Panel, Pill, EmptyState, Modal, useToast, statusTone, Avatar, TextArea, Notice, PageHeader, StatStrip } from "@/lib/ui";
 import { inCaseScope } from "@/lib/rbac";
 import { Ring } from "@/lib/charts";
 import type { CaseRecord, GateSubmission } from "@/lib/types";
+import { EVENTS } from "@/lib/audit";
 
 export function ApprovalsPage() {
-  const { cases, users, user, go, log, can, snap } = useSession();
+  const { cases, users, user, go, audit, can, snap, route } = useSession();
   const toast = useToast();
   const mayDecide = can("gate.write");
   const mayRead = can("gate.read");
-  const [target, setTarget] = useState<{ c: CaseRecord; g: GateSubmission } | null>(null);
+  // Deep link: #/approvals/{gateId} opens that submission for review.
+  const [target, setTarget] = useState<{ c: CaseRecord; g: GateSubmission } | null>(() => {
+    if (!route.id || !can("gate.write")) return null;
+    for (const c of Object.values(cases)) { const g = c.gates.find((x) => x.id === route.id && x.status === "pending"); if (g) return { c, g }; }
+    return null;
+  });
   const [decision, setDecision] = useState<"approve" | "return">("approve");
   const [note, setNote] = useState("");
 
@@ -36,22 +42,22 @@ export function ApprovalsPage() {
     if (!target || !user) return;
     if (decision === "return" && !note.trim()) return;
     await store.mutateCase(target.c.id, (x) => decideGate(x, target.g.id, decision === "approve", note.trim(), user));
-    await log(decision === "approve" ? `Gate ${target.g.gate} approved` : `Gate ${target.g.gate} returned`, target.c.ref, note.trim() || undefined);
+    await audit(EVENTS.gateDecided(target.c, target.g.gate, decision === "approve", note.trim() || undefined, target.g.round));
     toast(decision === "approve" ? `${STEP_BY_N[target.g.gate].title} approved for ${target.c.ref}` : "Returned to the counsellor with suggestions");
     setTarget(null); setNote(""); setDecision("approve");
   };
 
   return (
     <div className="stack">
-      <div className="page-head"><div><h1>Approvals</h1><p>Team Leader gates — financial verification (step 16) and visa file finalisation (step 19).</p></div></div>
-      <div className="grid grid-4 stagger">
-        <Kpi label="Awaiting decision" icon={<ShieldCheck aria-hidden />} value={rows.length} tone={rows.length ? "info" : "neutral"} sub={rows.length ? `oldest ${daysSince(rows[0].g.submittedAt)}d ago` : "queue is clear"} />
-        <Kpi label="Decisions recorded" value={history.length} sub={`${approved} approved · ${history.length - approved} returned`} />
-        <Kpi label="First-round approval" value={firstTime === null ? "—" : `${firstTime}%`} tone={firstTime !== null && firstTime >= 80 ? "ok" : "neutral"} sub="approved without a return" />
-        <Kpi label="Average turnaround" value={avgTurn === null ? "—" : `${avgTurn}d`} sub="submission to decision" />
-      </div>
+      <PageHeader title="Approvals" context="Team Leader gates — financial verification (step 16) and visa file finalisation (step 19)." />
+      <StatStrip label="Approval position" stats={[
+        { id: "waiting", label: "Awaiting decision", icon: <ShieldCheck aria-hidden />, value: rows.length, tone: rows.length ? "info" : "neutral", sub: rows.length ? `oldest ${daysSince(rows[0].g.submittedAt)}d ago` : "queue is clear" },
+        { id: "decided", label: "Decisions recorded", value: history.length, sub: `${approved} approved · ${history.length - approved} returned` },
+        { id: "first", label: "First-round approval", value: firstTime === null ? "—" : `${firstTime}%`, tone: firstTime !== null && firstTime >= 80 ? "ok" : "neutral", sub: "approved without a return" },
+        { id: "turn", label: "Average turnaround", value: avgTurn === null ? "—" : `${avgTurn}d`, sub: "submission to decision" },
+      ]} />
       <Panel title={`Awaiting decision (${rows.length})`} flush>
-        {rows.length === 0 ? <div className="panel-b"><Empty title="Nothing awaiting approval" hint="Counsellors submit financial and visa files here for your decision." /></div> : (
+        {rows.length === 0 ? <div className="panel-b"><EmptyState glyph="shield" title="Nothing awaiting approval" reason="Counsellors submit financial and visa files here for your decision." /></div> : (
           <ul>
             {rows.map(({ c, g }) => {
               const owner = c.counsellorId ? users[c.counsellorId] : undefined;
@@ -83,7 +89,7 @@ export function ApprovalsPage() {
         )}
       </Panel>
       <Panel title="Decisions" flush>
-        {history.length === 0 ? <div className="panel-b muted">No decisions recorded yet.</div> : (
+        {history.length === 0 ? <div className="panel-b"><EmptyState compact glyph="inbox" title="No decisions recorded yet" /></div> : (
           <div className="table-wrap">
             <table className="tbl">
               <thead><tr><th scope="col">Case</th><th scope="col">Gate</th><th scope="col">Round</th><th scope="col">Decision</th><th scope="col">By</th><th scope="col">When</th><th scope="col">Suggestions</th></tr></thead>
@@ -132,15 +138,15 @@ export function EscalationsPage() {
   const gatesReturned = scoped.flatMap((c) => ([16, 19] as const).map((g) => ({ c, g: latestGate(c, g) })).filter((x) => x.g?.status === "returned" && !x.g.addressedAt));
   return (
     <div className="stack">
-      <div className="page-head"><div><h1>Escalations</h1><p>Service level breaches, cases approaching a deadline, returned gates and holds due for review.</p></div></div>
-      <div className="grid grid-4 stagger">
-        <Kpi label="Breached" icon={<AlarmClock aria-hidden />} value={breached} tone={breached ? "bad" : "ok"} sub="service level clocks overdue" />
-        <Kpi label="Due soon" value={rows.length - breached} tone={rows.length - breached ? "warn" : "neutral"} sub="inside the reminder window" />
-        <Kpi label="Returned gates" value={gatesReturned.length} tone={gatesReturned.length ? "bad" : "neutral"} sub="awaiting the counsellor" />
-        <Kpi label="Holds to review" icon={<PauseCircle aria-hidden />} value={holds.length} tone={holds.length ? "warn" : "neutral"} sub="review date has passed" />
-      </div>
+      <PageHeader title="Escalations" context="Service level breaches, cases approaching a deadline, returned gates and holds due for review." />
+      <StatStrip label="Escalation position" stats={[
+        { id: "breached", label: "Breached", icon: <AlarmClock aria-hidden />, value: breached, tone: breached ? "bad" : "ok", sub: "service level clocks overdue" },
+        { id: "soon", label: "Due soon", value: rows.length - breached, tone: rows.length - breached ? "warn" : "neutral", sub: "inside the reminder window" },
+        { id: "returned", label: "Returned gates", value: gatesReturned.length, tone: gatesReturned.length ? "bad" : "neutral", sub: "awaiting the counsellor" },
+        { id: "holds", label: "Holds to review", icon: <PauseCircle aria-hidden />, value: holds.length, tone: holds.length ? "warn" : "neutral", sub: "review date has passed" },
+      ]} />
       <Panel title={`Service levels (${rows.length})`} flush>
-        {!mayRead ? <div className="panel-b"><Notice tone="neutral">Your role sees the counts. The escalation.read permission opens the case list.</Notice></div> : rows.length === 0 ? <div className="panel-b"><Empty title="No service level exposure" hint="Course Information Sheet deadlines, offer lapse dates and follow-ups appear here as they fall due." /></div> : (
+        {!mayRead ? <div className="panel-b"><Notice tone="neutral">Your role sees the counts. The escalation.read permission opens the case list.</Notice></div> : rows.length === 0 ? <div className="panel-b"><EmptyState glyph="check" title="No service level exposure" reason="Course Information Sheet deadlines, offer lapse dates and follow-ups appear here as they fall due." /></div> : (
           <div className="table-wrap">
             <table className="tbl">
               <thead><tr><th scope="col">Case</th><th scope="col">Counsellor</th><th scope="col">Clock</th><th scope="col">Due</th><th scope="col">Position</th><th scope="col">Step</th></tr></thead>
@@ -162,13 +168,13 @@ export function EscalationsPage() {
       </Panel>
       <div className="grid grid-2 stagger">
         <Panel title={`Returned gates awaiting counsellor (${gatesReturned.length})`} flush>
-          {gatesReturned.length === 0 ? <div className="panel-b muted">None.</div> : (
-            <ul>{gatesReturned.map(({ c, g }) => <li key={c.id + g!.id} className="flex aic jcb g2 wrap" style={{ padding: "11px 20px", borderBottom: "1px solid var(--hair)", fontSize: "var(--fs-sm)" }}><span><button type="button" className="row-btn ui" onClick={() => go({ page: "case", caseId: c.id, step: g!.gate })}>{c.ref}</button> · gate {g!.gate} · returned {fmtDateTime(g!.decidedAt)}</span><span className="muted ui xs">{c.counsellorId ? users[c.counsellorId]?.name : "Unassigned"}</span></li>)}</ul>
+          {gatesReturned.length === 0 ? <div className="panel-b"><EmptyState compact glyph="check" title="No returned gates" /></div> : (
+            <ul>{gatesReturned.map(({ c, g }) => <li key={c.id + g!.id} className="list-row flex aic jcb g2 wrap"><span><button type="button" className="row-btn ui" onClick={() => go({ page: "case", caseId: c.id, step: g!.gate })}>{c.ref}</button> · gate {g!.gate} · returned {fmtDateTime(g!.decidedAt)}</span><span className="muted ui xs">{c.counsellorId ? users[c.counsellorId]?.name : "Unassigned"}</span></li>)}</ul>
           )}
         </Panel>
         <Panel title={`Holds due for review (${holds.length})`} flush>
-          {holds.length === 0 ? <div className="panel-b muted">None.</div> : (
-            <ul>{holds.map((c) => <li key={c.id} className="flex aic jcb g2 wrap" style={{ padding: "11px 20px", borderBottom: "1px solid var(--hair)", fontSize: "var(--fs-sm)" }}><span><button type="button" className="row-btn ui" onClick={() => go({ page: "case", caseId: c.id })}>{c.ref}</button> · {c.student.name} · review {fmtDate(c.hold?.reviewDate)}</span><span className="muted ui xs">Step {currentStep(c) ?? "—"}</span></li>)}</ul>
+          {holds.length === 0 ? <div className="panel-b"><EmptyState compact glyph="clock" title="No holds due for review" /></div> : (
+            <ul>{holds.map((c) => <li key={c.id} className="list-row flex aic jcb g2 wrap"><span><button type="button" className="row-btn ui" onClick={() => go({ page: "case", caseId: c.id })}>{c.ref}</button> · {c.student.name} · review {fmtDate(c.hold?.reviewDate)}</span><span className="muted ui xs">Step {currentStep(c) ?? "—"}</span></li>)}</ul>
           )}
         </Panel>
       </div>

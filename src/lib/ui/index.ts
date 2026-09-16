@@ -1,0 +1,18 @@
+/**
+ * Lyceum Placements — Placement Management System
+ * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
+ * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ *
+ * Design-system primitives. Import from "@/lib/ui".
+ */
+export * from "./core";
+export * from "./modal";
+export * from "./toast";
+export * from "./focus";
+export * from "./layer";
+export * from "./skeleton";
+export * from "./empty";
+export * from "./stats";
+export * from "./progress";
+export * from "./segmented";
+export * from "./table";

@@ -8,16 +8,19 @@ import { Plus, KeyRound, UserRoundX, UserRoundCheck, Download } from "lucide-rea
 import { useSession } from "@/App";
 import { store, uid, nowIso, hashPassword, passwordProblem } from "@/lib/store";
 import { ROLE_LABEL, ROLES } from "@/lib/rbac";
-import { Modal, Notice, useToast, Pill, Avatar, Empty, TextField, SelectField, Kpi } from "@/lib/ui";
+import { Modal, Notice, useToast, Pill, Avatar, EmptyState, TextField, SelectField, PageHeader, StatStrip, CardList } from "@/lib/ui";
+import { BP, useMediaQuery } from "@/lib/hooks";
 import { fmtDateTime } from "@/lib/logic";
 import { Donut, Legend } from "@/lib/charts";
 import type { Role, User } from "@/lib/types";
+import { EVENTS } from "@/lib/audit";
 
 /** Shown beside an admin-users failure when the Edge Function is not on the project yet. */
 const NOT_DEPLOYED_HINT = "Deploy the admin-users function (supabase/functions/admin-users) to issue sign-ins from here.";
 
 export function StaffPage() {
-  const { users, user, cases, log, snap, can } = useSession();
+  const { users, user, cases, audit, snap, can } = useSession();
+  const phone = useMediaQuery(BP.mobile);
   const toast = useToast();
   const [tab, setTab] = useState<"staff" | "students">("staff");
   const [creating, setCreating] = useState(false);
@@ -40,32 +43,52 @@ export function StaffPage() {
       if (!r.ok) warn = r.notDeployed ? `Profile updated. Deploy the admin-users function to also ${next ? "unblock" : "block"} the sign-in itself.` : `Profile updated. The sign-in itself was not changed: ${r.error}`;
     }
     await store.mutateOrg((o) => { if (o.users[u.id]) o.users[u.id].active = next; return o; });
-    await log(next ? "Account reactivated" : "Account deactivated", u.email, warn ? "Profile only; sign-in unchanged" : undefined);
+    await audit(EVENTS.accountActive(u, next, warn ? "Profile only; sign-in unchanged" : undefined));
     if (warn) toast(warn, "warn"); else toast(`${u.name} ${next ? "reactivated" : "deactivated"}`);
   };
 
   return (
     <div className="stack">
-      <div className="page-head">
-        <div><h1>Staff</h1><p>Profiles, roles and access for {snap.org.config.orgName}.</p></div>
-        <div className="actions">
-          {can("staff.download") && <button type="button" className="btn btn-secondary" onClick={() => { const rows = [["Name","Role","Email","Phone","Branch","Status","Last sign-in"], ...Object.values(users).map((u) => [u.name, ROLE_LABEL[u.role], u.email, u.phone ?? "", u.branch ?? "", u.active ? "Active" : "Deactivated", u.lastSignInAt ?? ""])]; const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n"); const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); a.download = "lpl-staff.csv"; a.click(); void log("Staff list exported"); }}><Download aria-hidden />Export CSV</button>}
+      <PageHeader
+        title="Staff"
+        context={<>Profiles, roles and access for {snap.org.config.orgName}.</>}
+        actions={<>
+          {can("staff.download") && <button type="button" className="btn btn-secondary" onClick={() => { const rows = [["Name","Role","Email","Phone","Branch","Status","Last sign-in"], ...Object.values(users).map((u) => [u.name, ROLE_LABEL[u.role], u.email, u.phone ?? "", u.branch ?? "", u.active ? "Active" : "Deactivated", u.lastSignInAt ?? ""])]; const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n"); const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); a.download = "lpl-staff.csv"; a.click(); void audit(EVENTS.staffExported()); }}><Download aria-hidden />Export CSV</button>}
           {canWrite && <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}><Plus aria-hidden />Create a profile</button>}
-        </div>
-      </div>
-      <div className="grid grid-4 stagger">
-        <Kpi label="Active staff" value={staff.filter((u) => u.active).length} sub={`${staff.filter((u) => !u.active).length} deactivated`} />
-        <Kpi label="Counsellors" value={staff.filter((u) => u.role === "counsellor" && u.active).length} sub="case owners" />
-        <Kpi label="Team Leaders" value={staff.filter((u) => u.role === "team_leader" && u.active).length} tone="info" sub="approval authority" />
-        <Kpi label="Student profiles" value={Object.values(users).filter((u) => u.role === "student").length} sub="created from a case" />
-      </div>
+        </>}
+      />
+      <StatStrip label="Staff position" stats={[
+        { id: "active", label: "Active staff", value: staff.filter((u) => u.active).length, sub: `${staff.filter((u) => !u.active).length} deactivated` },
+        { id: "couns", label: "Counsellors", value: staff.filter((u) => u.role === "counsellor" && u.active).length, sub: "case owners" },
+        { id: "tl", label: "Team Leaders", value: staff.filter((u) => u.role === "team_leader" && u.active).length, tone: "info", sub: "approval authority" },
+        { id: "students", label: "Student profiles", value: Object.values(users).filter((u) => u.role === "student").length, sub: "created from a case" },
+      ]} />
       <div className="grid grid-3 stagger">
         <div className="span2 stack">
           <div className="seg" role="tablist" aria-label="Account type">
             <button type="button" role="tab" aria-selected={tab === "staff"} onClick={() => setTab("staff")}>Staff accounts</button>
             <button type="button" role="tab" aria-selected={tab === "students"} onClick={() => setTab("students")}>Student accounts</button>
           </div>
-          {list.length === 0 ? <Empty title={tab === "staff" ? "No staff profiles yet" : "No student accounts yet"} hint={tab === "staff" ? "Create counsellor and Team Leader profiles so cases can be assigned." : "Student sign-ins are issued by staff when a student case is created."} /> : (
+          {list.length === 0 ? <EmptyState glyph="students" title={tab === "staff" ? "No staff profiles yet" : "No student accounts yet"} reason={tab === "staff" ? "Create counsellor and Team Leader profiles so cases can be assigned." : "Student sign-ins are issued by staff when a student case is created."} /> : (
+            phone ? (
+              <CardList items={list} keyOf={(u) => u.id} label={tab === "staff" ? "Staff accounts" : "Student accounts"} render={(u) => {
+                const openN = Object.values(cases).filter((c) => (tab === "staff" ? c.counsellorId === u.id : c.studentUserId === u.id) && c.status === "open").length;
+                const own = Object.values(cases).find((c) => c.studentUserId === u.id);
+                return (
+                  <div className="case-card">
+                    <div className="flex aic jcb g2"><span className="flex aic g2" style={{ minWidth: 0 }}><Avatar name={u.name} size={30} tone={u.role === "admin" ? "ink" : undefined} /><span className="ui small strong truncate">{u.name}</span></span><Pill tone={u.active ? "ok" : "bad"}>{u.active ? "Active" : "Deactivated"}</Pill></div>
+                    <p className="xs muted truncate">{ROLE_LABEL[u.role]} · {u.email}{u.phone ? ` · ${u.phone}` : ""}</p>
+                    <p className="xs muted">{tab === "staff" ? `${openN} open case${openN === 1 ? "" : "s"}` : own?.ref ?? "No case"} · {u.lastSignInAt ? `signed in ${fmtDateTime(u.lastSignInAt)}` : "never signed in"}</p>
+                    {(canAccount || (canDeactivate && u.id !== user?.id)) && (
+                      <div className="flex wrap g1">
+                        {canAccount && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPasswordFor(u)}><KeyRound aria-hidden />Temporary password</button>}
+                        {canDeactivate && u.id !== user?.id && <button type="button" className={`btn btn-sm ${u.active ? "btn-danger-ghost" : "btn-ghost"}`} onClick={() => toggle(u)}>{u.active ? <><UserRoundX aria-hidden />Deactivate</> : <><UserRoundCheck aria-hidden />Reactivate</>}</button>}
+                      </div>
+                    )}
+                  </div>
+                );
+              }} />
+            ) : (
             <div className="panel table-wrap">
               <table className="tbl" style={{ minWidth: 760 }}>
                 <thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Contact</th><th scope="col">Branch</th><th scope="col" className="right">{tab === "staff" ? "Open cases" : "Case"}</th><th scope="col">Last sign-in</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
@@ -93,9 +116,10 @@ export function StaffPage() {
                 </tbody>
               </table>
             </div>
+            )
           )}
         </div>
-        <div className="panel"><div className="panel-h"><h2>Active staff by role</h2></div><div className="panel-b">{byRole.length === 0 ? <Empty title="No staff yet" /> : <div className="flex g3 aic wrap"><Donut data={byRole} title="Active staff by role" size={130} stroke={20} centerSub="staff" /><div className="grow"><Legend data={byRole} /></div></div>}</div></div>
+        <div className="panel"><div className="panel-h"><h2>Active staff by role</h2></div><div className="panel-b">{byRole.length === 0 ? <EmptyState compact glyph="students" title="No staff yet" /> : <div className="flex g3 aic wrap"><Donut data={byRole} title="Active staff by role" size={130} stroke={20} centerSub="staff" /><div className="grow"><Legend data={byRole} /></div></div>}</div></div>
       </div>
       {creating && <CreateProfile onClose={() => setCreating(false)} />}
       {passwordFor && <SetTemporaryPassword u={passwordFor} onClose={() => setPasswordFor(null)} />}
@@ -109,7 +133,7 @@ export function StaffPage() {
  * fails the profile is kept and the sign-in can be issued later from this page.
  */
 function CreateProfile({ onClose }: { onClose: () => void }) {
-  const { user, log, snap, can } = useSession();
+  const { user, audit, snap, can } = useSession();
   const toast = useToast();
   const canAccount = can("account.write");
   const roles = ROLES.filter((r) => r.id !== "student");
@@ -136,19 +160,19 @@ function CreateProfile({ onClose }: { onClose: () => void }) {
     const hash = issue && !server ? await hashPassword(f.password) : "";
     const u: User = { id: uid(), name: f.name.trim(), email: f.email.trim().toLowerCase(), phone: f.phone.trim(), branch: f.branch.trim(), role: f.role, passwordHash: hash, active: true, createdAt: nowIso(), createdBy: user.id };
     await store.mutateOrg((o) => { o.users[u.id] = u; return o; });
-    await log("Profile created", u.email, ROLE_LABEL[u.role]);
+    await audit(EVENTS.profileCreated(u));
     if (issue) {
       if (server) {
         const r = await server.createSignIn({ appUserId: u.id, email: u.email, password: f.password, name: u.name, phone: u.phone });
         if (!r.ok) {
-          await log("Sign-in not issued", u.email, r.error);
+          await audit(EVENTS.signInNotIssued(u.email, r.error));
           setBusy(false);
           toast(`${ROLE_LABEL[u.role]} profile created for ${u.name}`);
           setCreated({ name: u.name, error: r.error, notDeployed: !!r.notDeployed });
           return;
         }
       }
-      await log("Sign-in issued", u.email, ROLE_LABEL[u.role]);
+      await audit(EVENTS.signInIssued(u.email, ROLE_LABEL[u.role]));
     }
     toast(`${ROLE_LABEL[u.role]} profile created for ${u.name}`);
     onClose();
@@ -203,7 +227,7 @@ function CreateProfile({ onClose }: { onClose: () => void }) {
  * answers 409) is offered "Create sign-in" instead, which issues one with the same password.
  */
 function SetTemporaryPassword({ u, onClose }: { u: User; onClose: () => void }) {
-  const { log } = useSession();
+  const { audit } = useSession();
   const toast = useToast();
   const [pw, setPw] = useState("");
   const [err, setErr] = useState("");
@@ -225,7 +249,7 @@ function SetTemporaryPassword({ u, onClose }: { u: User; onClose: () => void }) 
     if (!server) {
       const hash = await hashPassword(pw);
       await store.mutateOrg((o) => { if (o.users[u.id]) o.users[u.id].passwordHash = hash; return o; });
-      await log("Temporary password set", u.email);
+      await audit(EVENTS.temporaryPassword(u));
       setBusy(false);
       toast(`Temporary password set for ${u.name}`);
       onClose();
@@ -234,7 +258,7 @@ function SetTemporaryPassword({ u, onClose }: { u: User; onClose: () => void }) 
     if (noSignIn) {
       const r = await server.createSignIn({ appUserId: u.id, email: u.email, password: pw, name: u.name, phone: u.phone });
       if (!r.ok) return fail(r.error, r.notDeployed);
-      await log("Sign-in issued", u.email, ROLE_LABEL[u.role]);
+      await audit(EVENTS.signInIssued(u.email, ROLE_LABEL[u.role]));
       setBusy(false);
       toast(`Sign-in issued for ${u.name}`);
       onClose();
@@ -245,7 +269,7 @@ function SetTemporaryPassword({ u, onClose }: { u: User; onClose: () => void }) 
       if (/no sign-in yet/i.test(r.error)) { setBusy(false); setNoSignIn(true); setHint("This profile has no sign-in yet. Create one with this password instead."); return; }
       return fail(r.error, r.notDeployed);
     }
-    await log("Temporary password set", u.email);
+    await audit(EVENTS.temporaryPassword(u));
     toast(`Temporary password set for ${u.name}`);
     onClose();
     } catch (ex) { setErr((ex as Error).message); } finally { setBusy(false); }

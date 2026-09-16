@@ -10,12 +10,15 @@ import { store } from "@/lib/store";
 import { canReadCase, canWorkCase, caseScopeOf } from "@/lib/rbac";
 import { PIPELINE, STEP_BY_N, EXIT_CODES, pipelineOfStep } from "@/lib/spine";
 import { derivedStatus, currentStep, pipelineProgress, slaFlags, latestGate, fmtDateTime, fmtDate, fmtMonth, changeStatus, pendingReviewCount, stepState, caseProgress, caseDestination, caseProgramme, caseTransfers, retentionDue, retentionState, RETENTION_LABEL, daysUntil, exitStageLabel, redactSensitive } from "@/lib/logic";
-import { Pill, statusTone, STATUS_LABEL, Modal, useToast, Avatar, Notice, ValueDisplay, isVisible, Tabs, TabPanel, TextArea, SelectField, Field } from "@/lib/ui";
+import { Pill, statusTone, STATUS_LABEL, Modal, useToast, Avatar, Notice, ValueDisplay, isVisible, Tabs, TabPanel, TextArea, SelectField, Field, SeverityChip } from "@/lib/ui";
 import { Ring, StageTrack } from "@/lib/charts";
 import { StepPanel } from "@/views/StepPanel";
 import { DocumentChecklist } from "@/views/Documents";
 import { AssignDialog } from "@/views/staff/Cases";
+import { markSeen } from "@/shell/rail/seen";
+import { CASE_HEAD_TRANSITION } from "@/lib/motion";
 import type { CaseRecord, CaseStatus } from "@/lib/types";
+import { EVENTS } from "@/lib/audit";
 
 type Tab = "step" | "documents" | "timeline" | "profile" | "dp";
 
@@ -23,7 +26,7 @@ type Tab = "step" | "documents" | "timeline" | "profile" | "dp";
 const stageIdOf = (n: number): string => (STEP_BY_N[n] ? pipelineOfStep(n) : PIPELINE[0]).id;
 
 export function CaseWorkspace({ caseId }: { caseId: string }) {
-  const { cases, users, user, can, snap, go, route, log } = useSession();
+  const { cases, users, user, can, snap, go, route, audit } = useSession();
   const toast = useToast();
   const c = cases[caseId];
   const [tab, setTab] = useState<Tab>((route.tab as Tab) || "step");
@@ -38,6 +41,8 @@ export function CaseWorkspace({ caseId }: { caseId: string }) {
   useEffect(() => { if (route.step) { setSel(route.step); setTab("step"); } }, [route.step]);
   useEffect(() => { if (route.tab && route.tab !== "step") setTab(route.tab as Tab); }, [route.tab]);
   useEffect(() => { const id = stageIdOf(sel); setOpenStages((s) => (s.has(id) ? s : new Set(s).add(id))); }, [sel]);
+  // The rail's "unseen updates" marker clears when the counsellor opens the case and follows it while it stays open.
+  useEffect(() => { if (user && c) markSeen(user.id, c.id, c.updatedAt); }, [user, c]);
 
   if (!c) return <div className="panel"><div className="panel-b"><p>This case is not available.</p><button type="button" className="btn btn-secondary mt3" onClick={() => go({ page: "cases" })}>Back to cases</button></div></div>;
   if (!canReadCase(snap.org.config, user, c)) return <div className="panel"><div className="panel-b"><h2>Not permitted</h2><p className="muted mt1">This case is not in your caseload.</p></div></div>;
@@ -60,7 +65,7 @@ export function CaseWorkspace({ caseId }: { caseId: string }) {
     // special-category fields receives the record with those values withheld.
     const data = { ...(can("sensitive.read") ? c : redactSensitive(c)), exportedAt: new Date().toISOString(), exportedBy: user?.name };
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })); a.download = `${c.ref}.json`; a.click();
-    await log("Case exported", c.ref);
+    await audit(EVENTS.caseExported(c));
     toast(`${c.ref} exported`);
   };
 
@@ -166,29 +171,29 @@ export function CaseWorkspace({ caseId }: { caseId: string }) {
         <button type="button" className="btn btn-ghost btn-sm" style={{ marginLeft: -10 }} onClick={() => go({ page: "cases" })}><ArrowLeft aria-hidden /> {seesAll ? "All cases" : "My caseload"}</button>
       </div>
 
-      <header className="panel" style={{ padding: "20px 22px" }}>
-        <div className="flex wrap g4" style={{ alignItems: "flex-start" }}>
+      <header className="panel case-head" style={{ viewTransitionName: CASE_HEAD_TRANSITION }}>
+        <div className="case-head-grid">
           <Ring pct={p.pct} size={116} stroke={10} tone={c.status === "completed" ? "ok" : c.status === "exited" ? "bad" : ""} label="Case completion" sub={`${p.done} of ${p.applicable}`} />
-          <div className="grow" style={{ minWidth: 240 }}>
+          <div className="case-head-id">
             <div className="flex aic g2 wrap">
-              <h1 style={{ fontSize: 24 }}>{c.student.name}</h1>
+              <h1>{c.student.name}</h1>
               <Pill tone={statusTone(c.status)}>{STATUS_LABEL[c.status]}</Pill>
             </div>
             <p className="ui small muted mt1">{c.ref} · opened {fmtDate(c.createdAt)} · {caseDestination(c)} · {caseProgramme(c)}</p>
-            <p className="ui small mt1" style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px" }}>
-              <a href={`mailto:${c.student.email}`} className="flex aic g1" style={{ color: "var(--ink2)" }}><Mail aria-hidden style={{ width: 14, height: 14 }} />{c.student.email}</a>
-              <a href={`tel:${c.student.phone}`} className="flex aic g1" style={{ color: "var(--ink2)" }}><Phone aria-hidden style={{ width: 14, height: 14 }} />{c.student.phone}</a>
+            <p className="case-contact ui small mt1">
+              <a href={`mailto:${c.student.email}`}><Mail aria-hidden />{c.student.email}</a>
+              <a href={`tel:${c.student.phone}`}><Phone aria-hidden />{c.student.phone}</a>
             </p>
-            <p className="mt2" style={{ fontSize: "var(--fs-md)" }}>
+            <p className="case-now mt2">
               {cur && curP ? <><b className="ui">Stage {curP.n} of 9 · {curP.name}</b> <span className="muted">· step {cur}. {STEP_BY_N[cur].title} · {STEP_BY_N[cur].owner}</span></> : <span className="ui strong" style={{ color: "var(--green-text)" }}>All steps complete</span>}
             </p>
             {flags.filter((f) => f.state !== "ok").length > 0 && (
-              <div className="flex wrap g1 mt2">{flags.filter((f) => f.state !== "ok").map((f) => <Pill key={f.id} tone={statusTone(f.state)} icon={<CalendarClock aria-hidden />}>{f.label} · {f.days < 0 ? `${-f.days}d overdue` : f.days === 0 ? "today" : `${f.days}d`}</Pill>)}</div>
+              <div className="flex wrap g1 mt2">{flags.filter((f) => f.state !== "ok").map((f) => <SeverityChip key={f.id} severity={f.state === "breached" ? "bad" : "warn"} icon={<CalendarClock aria-hidden />}>{f.label} · {f.days < 0 ? `${-f.days}d overdue` : f.days === 0 ? "today" : `${f.days}d`}</SeverityChip>)}</div>
             )}
           </div>
-          <div className="stack-sm" style={{ minWidth: 220 }}>
-            <div className="soft" style={{ padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
-              {owner ? <><Avatar name={owner.name} size={30} /><div className="grow" style={{ minWidth: 0 }}><p className="ui small strong truncate">{owner.name}</p><p className="ui xs muted">Counsellor</p></div></> : <span className="ui small" style={{ color: "var(--accent-text)", fontWeight: 600 }}>No counsellor assigned</span>}
+          <div className="case-head-side surface-2">
+            <div className="case-owner">
+              {owner ? <><Avatar name={owner.name} size={30} /><div className="grow" style={{ minWidth: 0 }}><p className="ui small strong truncate">{owner.name}</p><p className="ui xs muted">Counsellor</p></div></> : <span className="ui small case-unowned">No counsellor assigned</span>}
               {can("assignment.write") && c.status === "open" && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAssign(true)}>{owner ? "Reassign" : "Assign"}</button>}
             </div>
             <div className="flex wrap g1">
@@ -302,7 +307,7 @@ function ProfileSummary({ c, sensitiveOk, studentSubmittedAt }: { c: CaseRecord;
 }
 
 function StatusDialog({ c, status, onClose, onDone }: { c: CaseRecord; status: CaseStatus; onClose: () => void; onDone: (msg: string) => void }) {
-  const { user, log } = useSession();
+  const { user, audit } = useSession();
   const [code, setCode] = useState(EXIT_CODES[0]);
   const [reason, setReason] = useState("");
   const [date, setDate] = useState("");
@@ -312,7 +317,7 @@ function StatusDialog({ c, status, onClose, onDone }: { c: CaseRecord; status: C
     if (!user) return;
     if (status === "exited" && !reason.trim()) return;
     await store.mutateCase(c.id, (x) => changeStatus(x, status, user, { code, reason: reason.trim(), reviewDate: date || undefined, intake: intake || undefined }));
-    await log(titles[status], c.ref, status === "exited" ? `${code}${reason ? ` — ${reason}` : ""}` : reason || undefined);
+    await audit(EVENTS.caseStatus(c, status, status === "exited" ? `${code}${reason ? ` — ${reason}` : ""}` : reason || undefined));
     onDone(`${c.ref} — ${STATUS_LABEL[status]}`);
     onClose();
   };

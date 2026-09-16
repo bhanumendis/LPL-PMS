@@ -1,0 +1,59 @@
+/**
+ * Lyceum Placements — Placement Management System
+ * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
+ * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ */
+import { describe, expect, it } from "vitest";
+import { activeDestination, destinationsFor, moreDestination, pageTitle, type NavInput } from "./nav";
+import { can as canFn, caseScopeOf } from "@/lib/rbac";
+import { defaultConfig } from "@/lib/defaults";
+import { user } from "@/test/fixtures";
+import type { Role } from "@/lib/types";
+
+function input(role: Role): NavInput {
+  const config = defaultConfig();
+  const u = user({ id: role, role });
+  return { role, can: (p) => canFn(config, u, p), isAdmin: role === "admin", seesAll: caseScopeOf(config, role) === "all" };
+}
+
+describe("destinationsFor", () => {
+  it("counsellor: home, my caseload, approvals; nothing under more", () => {
+    const { primary, more } = destinationsFor(input("counsellor"));
+    expect(primary.map((d) => d.id)).toEqual(["home", "cases", "approvals"]);
+    expect(primary[1].label).toBe("My caseload");
+    expect(primary[0].label).toBe("Home");
+    expect(more).toEqual([]);
+  });
+  it("team leader: people and governance grouped, no settings", () => {
+    const { primary, more } = destinationsFor(input("team_leader"));
+    expect(primary.map((d) => d.id)).toEqual(["home", "cases", "approvals", "escalations", "people", "governance"]);
+    expect(primary[1].label).toBe("Cases");
+    expect(primary.find((d) => d.id === "people")?.children).toBeUndefined(); // staff only
+    expect(primary.find((d) => d.id === "governance")?.children?.map((c) => c.page)).toEqual(["dataprotection", "audit"]);
+    expect(more).toEqual([]);
+  });
+  it("administrator: six primary destinations plus settings and prompts under more", () => {
+    const { primary, more } = destinationsFor(input("admin"));
+    expect(primary).toHaveLength(6);
+    expect(more.map((m) => m.page)).toEqual(["settings", "prompts"]);
+    expect(moreDestination(more)?.children?.map((c) => c.page)).toEqual(["settings", "prompts"]);
+    expect(primary[0].shortcut).toBe("Alt+1");
+  });
+  it("student: four destinations", () => {
+    const { primary } = destinationsFor(input("student"));
+    expect(primary.map((d) => d.label)).toEqual(["My placement", "Profile", "Documents", "Journey"]);
+  });
+  it("activeDestination maps case, roles and audit onto their groups", () => {
+    const { primary } = destinationsFor(input("admin"));
+    expect(activeDestination("case", primary)).toBe("cases");
+    expect(activeDestination("roles", primary)).toBe("people");
+    expect(activeDestination("audit", primary)).toBe("governance");
+    expect(activeDestination("", primary)).toBe("home");
+  });
+  it("pageTitle follows role and scope", () => {
+    expect(pageTitle("", input("counsellor"))).toBe("My dashboard");
+    expect(pageTitle("cases", input("counsellor"))).toBe("My caseload");
+    expect(pageTitle("", input("team_leader"))).toBe("Overview");
+    expect(pageTitle("journey", input("student"))).toBe("Journey");
+  });
+});

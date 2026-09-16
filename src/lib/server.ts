@@ -16,7 +16,11 @@
  *      administrator through the admin-users Edge Function (supabase/functions/admin-users).
  */
 import type { AuditEntry, AuditState, CaseRecord, CasesState, OrgConfig, OrgState, PromptTemplate, PromptsState, User } from "./types";
+import type { AuditEventType, Change, EntityType } from "./audit";
+import type { AuditQuery } from "./store";
 import { defaultAudit, defaultCases, defaultConfig, defaultPrompts, normalizeConfig } from "./defaults";
+import type { NotificationRow, NotificationState, NotificationType, Priority } from "@/notifications/types";
+import type { PushDevice, PushSubscriptionInput } from "@/notifications/push";
 
 export interface ServerConfig { url: string; anonKey: string }
 
@@ -254,8 +258,25 @@ interface UserRow {
   role: User["role"]; active: boolean; created_at: string; created_by: string | null; last_sign_in_at: string | null;
 }
 interface CaseRow { id: string; ref: string; status: string; counsellor_id: string | null; student_user_id: string | null; rev: number; updated_at: string; data: CaseRecord }
-interface AuditRow { id: string; at: string; actor_id: string; actor_name: string; actor_role: User["role"]; action: string; target: string | null; detail: string | null }
+interface AuditRow {
+  id: string; at: string; actor_id: string; actor_name: string; actor_role: User["role"]; action: string; target: string | null; detail: string | null;
+  event_type?: string | null; entity_type?: string | null; entity_id?: string | null; entity_label?: string | null; outcome?: string | null;
+  source?: string | null; session_id?: string | null; summary?: string | null; changes?: Change[] | null; meta?: Record<string, unknown> | null; has_changes?: boolean | null;
+}
 interface PromptRow { id: string; title: string; status: string; version: number; updated_at: string; updated_by: string; data: PromptTemplate }
+interface NotificationDbRow {
+  id: string; recipient_id: string; at: string; type: NotificationType; priority: Priority; title: string; body: string | null;
+  case_id: string | null; case_ref: string | null; step: number | null; link: string | null; group_key: string | null; dedupe_key: string | null;
+  read_at: string | null; pushed_at: string | null;
+}
+
+function toNotification(r: NotificationDbRow): NotificationRow {
+  return {
+    id: r.id, recipientId: r.recipient_id, at: r.at, type: r.type, priority: r.priority, title: r.title, body: r.body ?? undefined,
+    caseId: r.case_id ?? undefined, caseRef: r.case_ref ?? undefined, step: r.step ?? undefined, link: r.link ?? undefined,
+    groupKey: r.group_key ?? undefined, dedupeKey: r.dedupe_key ?? undefined, readAt: r.read_at ?? undefined,
+  };
+}
 
 function toUser(r: UserRow): User {
   return {
@@ -283,11 +304,22 @@ function fromCase(c: CaseRecord): CaseRow {
 }
 
 function fromAudit(e: AuditEntry): AuditRow {
-  return { id: e.id, at: e.at, actor_id: e.actorId, actor_name: e.actorName, actor_role: e.actorRole, action: e.action, target: e.target ?? null, detail: e.detail ?? null };
+  return {
+    id: e.id, at: e.at, actor_id: e.actorId, actor_name: e.actorName, actor_role: e.actorRole, action: e.action, target: e.target ?? null, detail: e.detail ?? null,
+    event_type: e.eventType ?? null, entity_type: e.entityType ?? null, entity_id: e.entityId ?? null, entity_label: e.entityLabel ?? null,
+    outcome: e.outcome ?? "success", source: e.source ?? null, session_id: e.sessionId ?? null, summary: e.summary ?? null,
+    changes: e.changes?.length ? e.changes : null, meta: e.meta ?? null,
+  };
 }
 
 function toAudit(r: AuditRow): AuditEntry {
-  return { id: r.id, at: r.at, actorId: r.actor_id, actorName: r.actor_name, actorRole: r.actor_role, action: r.action, target: r.target ?? undefined, detail: r.detail ?? undefined };
+  return {
+    id: r.id, at: r.at, actorId: r.actor_id, actorName: r.actor_name, actorRole: r.actor_role, action: r.action, target: r.target ?? undefined, detail: r.detail ?? undefined,
+    eventType: (r.event_type ?? undefined) as AuditEventType | undefined, entityType: (r.entity_type ?? undefined) as EntityType | undefined,
+    entityId: r.entity_id ?? undefined, entityLabel: r.entity_label ?? undefined, outcome: (r.outcome ?? undefined) as AuditEntry["outcome"],
+    source: r.source ?? undefined, sessionId: r.session_id ?? undefined, summary: r.summary ?? undefined,
+    changes: r.changes ?? undefined, meta: r.meta ?? undefined, hasChanges: r.has_changes ?? (r.changes ? r.changes.length > 0 : undefined),
+  };
 }
 
 function fromPrompt(p: PromptTemplate): PromptRow {
@@ -332,11 +364,11 @@ export class SupabaseBackend {
       const empty = await this.client.rpc<boolean>("needs_bootstrap").catch(() => false);
       return { org: { config: { ...defaultConfig(), setupComplete: !empty }, users: {} } as OrgState, cases: defaultCases(), audit: defaultAudit(), prompts: defaultPrompts() };
     }
-    const [orgRows, userRows, caseRows, auditRows, promptRows] = await Promise.all([
+    // The audit log is no longer part of the snapshot: the explorer pages it through audit_page.
+    const [orgRows, userRows, caseRows, promptRows] = await Promise.all([
       this.client.select<OrgRow>("org_config"),
       this.client.select<UserRow>("app_users"),
       this.client.select<CaseRow>("cases", "&order=updated_at.desc"),
-      this.client.select<AuditRow>("audit", "&order=at.desc&limit=600"),
       // Prompts are administrator-only; other roles receive an empty set from RLS.
       this.client.select<PromptRow>("prompts", "&order=updated_at.desc").catch(() => [] as PromptRow[]),
     ]);
@@ -350,8 +382,7 @@ export class SupabaseBackend {
     return {
       org: { config, users } as OrgState,
       cases: { cases, rev: caseRows.reduce((n, r) => n + (r.rev ?? 0), 0) } as CasesState,
-      // The revision follows the newest entry rather than the row count, which saturates at the 600-row window.
-      audit: { entries: auditRows.map(toAudit), rev: auditRows[0] ? Date.parse(auditRows[0].at) || auditRows.length : 0 } as AuditState,
+      audit: defaultAudit(),
       prompts: { prompts, rev: promptRows.reduce((n, r) => n + (r.version ?? 0), 0) } as PromptsState,
     };
   }
@@ -387,6 +418,21 @@ export class SupabaseBackend {
     await this.client.upsert("audit", [fromAudit(entry)]);
   }
 
+  /** One keyset page of the audit log, newest first; RLS (audit.read) decides what comes back. */
+  async auditPage(q: AuditQuery): Promise<AuditEntry[]> {
+    const rows = await this.client.rpc<AuditRow[]>("audit_page", {
+      p_before: q.before ?? null, p_actor: q.actorId ?? null, p_event_type: q.eventType ?? null, p_entity_type: q.entityType ?? null,
+      p_entity_id: q.entityId ?? null, p_from: q.from ?? null, p_to: q.to ?? null, p_q: q.q?.trim() || null, p_limit: q.limit ?? 50,
+    });
+    return (Array.isArray(rows) ? rows : []).map(toAudit);
+  }
+
+  async auditDetail(id: string): Promise<Pick<AuditEntry, "changes" | "meta"> | null> {
+    const rows = await this.client.rpc<{ id: string; changes: Change[] | null; meta: Record<string, unknown> | null }[]>("audit_detail", { p_id: id });
+    const r = Array.isArray(rows) ? rows[0] : undefined;
+    return r ? { changes: r.changes ?? undefined, meta: r.meta ?? undefined } : null;
+  }
+
   /**
    * Maps a GoTrue identity to the LPL profile. The database trigger in schema.sql links
    * the identity to the profile an administrator created for that email address.
@@ -416,6 +462,38 @@ export class SupabaseBackend {
     for (let i = 0; i < entries.length; i += 100) await this.client.upsert("audit", entries.slice(i, i + 100).map(fromAudit));
     const prompts = Object.values(w.prompts.prompts);
     if (prompts.length) await this.client.upsert("prompts", prompts.map(fromPrompt));
+  }
+
+  // ---- notifications: written by database triggers, read through RLS-scoped RPCs ----
+
+  async notificationState(): Promise<NotificationState> {
+    if (!this.client.signedIn) return { unread: 0, latest: null };
+    const rows = await this.client.rpc<{ unread: number; latest: string | null }[] | { unread: number; latest: string | null }>("notification_state");
+    const r = Array.isArray(rows) ? rows[0] : rows;
+    return { unread: Number(r?.unread ?? 0), latest: r?.latest ?? null };
+  }
+  async notificationsPage(_userId: string, before: string | null, limit: number, unreadOnly: boolean): Promise<NotificationRow[]> {
+    const rows = await this.client.rpc<NotificationDbRow[]>("notifications_page", { p_before: before, p_limit: limit, p_unread_only: unreadOnly });
+    return (rows ?? []).map(toNotification);
+  }
+  async markNotificationsRead(_userId: string, ids: string[]): Promise<number> {
+    return Number(await this.client.rpc<number>("mark_notifications_read", { p_ids: ids }));
+  }
+  async markAllNotificationsRead(): Promise<number> {
+    return Number(await this.client.rpc<number>("mark_all_notifications_read"));
+  }
+
+  // ---- push subscriptions (own rows under RLS) ----
+  async savePushSubscription(userId: string, sub: PushSubscriptionInput): Promise<void> {
+    const now = new Date().toISOString();
+    await this.client.upsert("push_subscriptions", [{ user_id: userId, endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth, user_agent: sub.userAgent, last_seen_at: now, revoked_at: null }], "endpoint");
+  }
+  async revokePushSubscription(_userId: string, endpoint: string): Promise<void> {
+    await this.client.patch("push_subscriptions", `endpoint=eq.${encodeURIComponent(endpoint)}`, { revoked_at: new Date().toISOString() });
+  }
+  async listPushSubscriptions(userId: string): Promise<PushDevice[]> {
+    const rows = await this.client.select<{ endpoint: string; created_at: string; last_seen_at: string; user_agent: string | null }>("push_subscriptions", `&user_id=eq.${encodeURIComponent(userId)}&revoked_at=is.null&order=created_at.desc`);
+    return rows.map((r) => ({ endpoint: r.endpoint, createdAt: r.created_at, lastSeenAt: r.last_seen_at, userAgent: r.user_agent ?? undefined }));
   }
 
   /** Cheap change probe used by polling; null when the project predates the function. */

@@ -1,0 +1,251 @@
+/*! Lyceum Placements - Placement Management System | Copyright (c) 2026 Bhanu Mendis. All rights reserved. | Author: Bhanu Mendis, Group IT, Lyceum Global Holdings */
+/* Design tokens. Light on :root, dark on html[data-theme="dark"]. Verified by scripts/contrast.mjs. */
+
+:root {
+  /* brand */
+  --navy: #0b1f4b;
+  --royal: #1240b3;
+  --white: #ffffff;
+  --black: #000000;
+
+  /* ground and ink */
+  --bg: #ffffff;
+  --bg2: #f2f5fa;
+  --ink: #000000;
+  --ink2: #243047;          /* 13.2:1 on white */
+  --muted: #414c5e;         /* 8.7:1 on white, 7.9:1 on --bg2, 7.3:1 on every tint */
+  --hair: #e3e8f0;
+  --hair2: #cbd3e0;
+  --mid: #9aa7ba;           /* decorative only */
+  --line-strong: #6b7a90;   /* 4.4:1 — input boundaries */
+
+  /* accent: royal blue */
+  --accent: #1240b3;        /* graphics and solid buttons; the label on it is white at 8.7:1 */
+  --accent-2: #0b1f4b;      /* secondary series */
+  --accent-text: #1240b3;   /* 8.7:1 on white, 7.3:1 on the tint */
+  --accent-soft: #e3ecfb;
+  --accent-line: #9db5e8;
+  --accent-glow: rgba(18, 64, 179, 0.28);
+  --on-accent: #ffffff;
+  --navy-text: #0b1f4b;     /* 16:1 on white, 14:1 on the tint */
+  --navy-soft: #e6ebf5;
+
+  /* semantic status. Brand chrome stays blue; these carry state only and each also carries text. */
+  --green: #1f8a44;         /* graphics 4.4:1 */
+  --green-text: #0f5223;    /* 9.3:1 on white, 8.1:1 on the tint */
+  --green-soft: #e1f3e6;
+  --green-line: #8fcaa2;
+  --on-green: #ffffff;
+  --warn: #d97706;          /* graphics 3.2:1 */
+  --warn-text: #7a3e00;     /* 8.4:1 on white, 7.4:1 on the tint */
+  --warn-soft: #fdefd8;
+  --warn-line: #ecb46c;
+  --exit: #8f1414;          /* text and destructive: 9.2:1 on white, 7.6:1 on the tint */
+  --exit-soft: #fbe4e4;
+  --exit-line: #e39a9a;
+  --on-exit: #ffffff;
+  --funnel: linear-gradient(90deg, #1240b3, #0b1f4b);
+
+  /* glass */
+  --glass: rgba(255, 255, 255, 0.72);
+  --glass-strong: rgba(255, 255, 255, 0.92);
+  --glass-solid: #ffffff;
+  --glass-border: rgba(255, 255, 255, 0.85);
+  --glass-edge: rgba(11, 31, 75, 0.08);
+  --shadow: 0 1px 2px rgba(11, 31, 75, 0.05), 0 8px 24px rgba(11, 31, 75, 0.08);
+  --shadow-up: 0 2px 6px rgba(11, 31, 75, 0.08), 0 22px 48px rgba(11, 31, 75, 0.14);
+  --inset-hi: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  --glow-1: #e3ecfb;
+  --glow-2: #e6ebf5;
+  --glow-3: #eef3fb;
+  --scrim: rgba(11, 31, 75, 0.42);
+
+  /* sign-in side panel: navy with white text in both appearances */
+  --auth-bg: #0b1f4b;
+  --auth-fg: #ffffff;
+  --auth-muted: #c2cde3;    /* 10:1 on navy, 13:1 on black */
+  --auth-line: rgba(255, 255, 255, 0.18);
+  --auth-glow-1: rgba(18, 64, 179, 0.55);
+  --auth-glow-2: rgba(91, 156, 255, 0.28);
+
+  /* type */
+  --ui: "Poppins", "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+  --serif: "Lora", Georgia, "Times New Roman", serif;
+  --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --fs-xs: 12.5px;
+  --fs-sm: 13.5px;
+  --fs-md: 14.5px;
+  --fs-lg: 16px;
+
+  /* radius & motion */
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 26px;
+  --spring: cubic-bezier(0.34, 1.28, 0.5, 1);
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --t-fast: 0.18s;
+  --t-med: 0.32s;
+  --t-slow: 0.55s;
+  --focus: #1240b3;
+
+  /* v5: spacing, radius, motion, layers */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px; --s-6: 24px; --s-7: 32px; --s-8: 40px;
+  --r-pill: 999px;
+  --d-1: 120ms; --d-2: 200ms; --d-3: 320ms; --d-4: 480ms; --d-chart: 900ms;
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+  --z-page: 1; --z-rail: 20; --z-bar: 30; --z-dock: 31; --z-popover: 50; --z-sheet: 60; --z-modal: 70; --z-toast: 80;
+  --t-display: 32px;
+
+  /* v5: surface tiers. `surface` is solid content; `float` is the only glass. */
+  --surface: #ffffff;
+  --surface-2: #f2f5fa;
+  --surface-border: #e3e8f0;
+  --float: rgba(255, 255, 255, 0.78);
+  --float-strong: rgba(255, 255, 255, 0.94);
+  --float-border: rgba(255, 255, 255, 0.9);
+  --edge-light: rgba(255, 255, 255, 0.95);
+  --e-1: 0 1px 2px rgba(11, 31, 75, 0.05), 0 4px 14px rgba(11, 31, 75, 0.06);
+  --e-2: 0 2px 6px rgba(11, 31, 75, 0.08), 0 14px 36px rgba(11, 31, 75, 0.12);
+  --e-3: 0 4px 10px rgba(11, 31, 75, 0.10), 0 28px 64px rgba(11, 31, 75, 0.18);
+  --unread: #1240b3;
+  --sev-bad: #8f1414;
+  --sev-warn: #d97706;
+  --sev-info: #1240b3;
+  --rail-launch-from: #1d4ed8;
+  --rail-launch-to: #6d28d9;
+  --alert-badge: #9f1239;
+  --on-hue: #ffffff;
+  --bar-h: 64px;
+  --tabbar-h: 64px;
+  /* v5 spectrum: eight professional hues for icons, series and stage markers. Graphics 3:1+, text 7:1+ on surface and on its own tint. */
+  --hue-blue: #1d4ed8;
+  --hue-blue-text: #1e3a8a;
+  --hue-blue-soft: #e5edfd;
+  --hue-indigo: #4338ca;
+  --hue-indigo-text: #312e81;
+  --hue-indigo-soft: #ebeafd;
+  --hue-violet: #7c3aed;
+  --hue-violet-text: #5b21b6;
+  --hue-violet-soft: #f1eafe;
+  --hue-cyan: #0e7490;
+  --hue-cyan-text: #164e63;
+  --hue-cyan-soft: #e0f3f8;
+  --hue-teal: #0f766e;
+  --hue-teal-text: #134e4a;
+  --hue-teal-soft: #dff3f0;
+  --hue-emerald: #15803d;
+  --hue-emerald-text: #14532d;
+  --hue-emerald-soft: #e1f4e7;
+  --hue-amber: #b45309;
+  --hue-amber-text: #78350f;
+  --hue-amber-soft: #fdf0dc;
+  --hue-rose: #be123c;
+  --hue-rose-text: #881337;
+  --hue-rose-soft: #fde6ec;
+  /* one hue per pipeline stage, used on bars, rings and markers (graphics only) */
+  --stage-1: var(--hue-blue);
+  --stage-2: var(--hue-indigo);
+  --stage-3: var(--hue-violet);
+  --stage-4: var(--hue-rose);
+  --stage-5: var(--hue-amber);
+  --stage-6: var(--hue-cyan);
+  --stage-7: var(--hue-teal);
+  --stage-8: var(--hue-emerald);
+  --stage-9: var(--hue-emerald);
+}
+
+html[data-theme="dark"] {
+  --bg: #000000;
+  --bg2: #05080f;
+  --ink: #ffffff;
+  --ink2: #d4dbe8;          /* 15:1 on black */
+  --muted: #a9b8cf;         /* 10.4:1 on black, 6.5:1+ never used on a tint */
+  --hair: rgba(255, 255, 255, 0.12);
+  --hair2: rgba(255, 255, 255, 0.22);
+  --mid: rgba(255, 255, 255, 0.34);
+  --line-strong: rgba(255, 255, 255, 0.46);
+  --accent: #5b9cff;        /* graphics and solid buttons; the label on it is black at 7.7:1 */
+  --accent-2: #c7d4f0;
+  --accent-text: #8fb4ff;   /* 10:1 on black, 8.2:1 on the tint */
+  --accent-soft: #0b1a3f;
+  --accent-line: #2c4a8a;
+  --accent-glow: rgba(91, 156, 255, 0.35);
+  --on-accent: #000000;
+  --navy-text: #c7d4f0;     /* 13:1 on black, 11.5:1 on the tint */
+  --navy-soft: #0f1a33;
+  --green: #4ade80;
+  --green-text: #6fd58f;    /* 11.6:1 on black, 9.2:1 on the tint */
+  --green-soft: #06240f;
+  --green-line: #1f5a33;
+  --on-green: #000000;
+  --warn: #f59e0b;
+  --warn-text: #f5b451;     /* 11.5:1 on black, 9.3:1 on the tint */
+  --warn-soft: #2a1a00;
+  --warn-line: #7a4d00;
+  --exit: #ff8a80;          /* 9.2:1 on black, 7.9:1 on the tint */
+  --exit-soft: #2e0a0a;
+  --exit-line: #7a2626;
+  --on-exit: #000000;
+  --funnel: linear-gradient(90deg, #5b9cff, #8fb4ff);
+  --glass: rgba(0, 0, 0, 0.66);
+  --glass-strong: rgba(0, 0, 0, 0.92);
+  --glass-solid: #000000;
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-edge: rgba(255, 255, 255, 0.08);
+  --shadow: 0 0 0 1px rgba(255, 255, 255, 0.04), 0 8px 24px rgba(0, 0, 0, 0.6);
+  --shadow-up: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 20px 48px rgba(0, 0, 0, 0.75);
+  --inset-hi: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --glow-1: #0b1a3f;
+  --glow-2: #0f1a33;
+  --glow-3: #06122e;
+  --scrim: rgba(0, 0, 0, 0.7);
+  --auth-bg: #000000;
+  --auth-line: rgba(255, 255, 255, 0.14);
+  --auth-glow-1: rgba(18, 64, 179, 0.5);
+  --auth-glow-2: rgba(91, 156, 255, 0.22);
+  --focus: #8fb4ff;
+
+  /* v5 surface tiers, dark: pure black surfaces separated by hairline and glow */
+  --surface: #000000;
+  --surface-2: #05080f;
+  --surface-border: rgba(255, 255, 255, 0.12);
+  --float: rgba(0, 0, 0, 0.72);
+  --float-strong: rgba(0, 0, 0, 0.94);
+  --float-border: rgba(255, 255, 255, 0.14);
+  --edge-light: rgba(255, 255, 255, 0.10);
+  --e-1: 0 0 0 1px rgba(255, 255, 255, 0.04), 0 4px 14px rgba(0, 0, 0, 0.5);
+  --e-2: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 14px 36px rgba(0, 0, 0, 0.65);
+  --e-3: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 28px 64px rgba(0, 0, 0, 0.8);
+  --unread: #5b9cff;
+  --sev-bad: #ff8a80;
+  --sev-warn: #f59e0b;
+  --sev-info: #5b9cff;
+  --on-hue: #000000;
+  /* v5 spectrum: dark */
+  --hue-blue: #60a5fa;
+  --hue-blue-text: #93c5fd;
+  --hue-blue-soft: #0b1936;
+  --hue-indigo: #818cf8;
+  --hue-indigo-text: #a5b4fc;
+  --hue-indigo-soft: #13123a;
+  --hue-violet: #a78bfa;
+  --hue-violet-text: #c4b5fd;
+  --hue-violet-soft: #1c1236;
+  --hue-cyan: #22d3ee;
+  --hue-cyan-text: #67e8f9;
+  --hue-cyan-soft: #04222a;
+  --hue-teal: #2dd4bf;
+  --hue-teal-text: #5eead4;
+  --hue-teal-soft: #04241f;
+  --hue-emerald: #34d399;
+  --hue-emerald-text: #6ee7b7;
+  --hue-emerald-soft: #05241a;
+  --hue-amber: #fbbf24;
+  --hue-amber-text: #fcd34d;
+  --hue-amber-soft: #291c02;
+  --hue-rose: #fb7185;
+  --hue-rose-text: #fda4af;
+  --hue-rose-soft: #2d0a14;
+}

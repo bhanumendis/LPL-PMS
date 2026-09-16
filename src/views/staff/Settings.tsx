@@ -8,18 +8,31 @@ import { Save, Download, Upload, Trash2 } from "lucide-react";
 import { useSession } from "@/App";
 import { store, DEFAULT_RETENTION } from "@/lib/store";
 import { readServerConfig, writeServerConfig } from "@/lib/server";
-import { Panel, useToast, Notice, Modal, TextField, TextArea } from "@/lib/ui";
+import { Panel, useToast, Notice, Modal, TextField, TextArea, PageHeader } from "@/lib/ui";
 import { retentionPolicy } from "@/lib/logic";
-import type { AuditState, CasesState, OrgState, PromptsState } from "@/lib/types";
+import type { AuditState, CasesState, OrgConfig, OrgState, PromptsState } from "@/lib/types";
+import { EVENTS, diffChanges } from "@/lib/audit";
+
+/** The editable settings as form strings; also the "before" side of the audit diff. */
+function settingsForm(cfg: OrgConfig, ret: ReturnType<typeof retentionPolicy>) {
+  return { orgName: cfg.orgName, entityCode: cfg.entityCode, cisDays: String(cfg.sla.cisDays), offerReminderDays: String(cfg.sla.offerReminderDays), followUpMonths: String(cfg.sla.followUpMonths), exitedMonths: String(ret.exitedMonths), completedMonths: String(ret.completedMonths), dormantMonths: String(ret.dormantMonths), warnDays: String(ret.warnDays), channels: cfg.channels.join("\n"), branches: cfg.branches.join("\n"), vapidPublicKey: cfg.push?.vapidPublicKey ?? "" };
+}
+
+const SETTINGS_FIELDS = [
+  { id: "orgName", label: "Organisation name" }, { id: "entityCode", label: "Case reference prefix" },
+  { id: "cisDays", label: "Course Information Sheet days" }, { id: "offerReminderDays", label: "Offer reminder days" }, { id: "followUpMonths", label: "Follow-up months" },
+  { id: "exitedMonths", label: "Retention after exit (months)" }, { id: "completedMonths", label: "Retention after completion (months)" }, { id: "dormantMonths", label: "Dormant hold (months)" }, { id: "warnDays", label: "Retention warning days" },
+  { id: "channels", label: "Enquiry channels" }, { id: "branches", label: "Branches" }, { id: "vapidPublicKey", label: "VAPID public key" },
+];
 
 export function SettingsPage() {
-  const { snap, log, signOut, can, isAdmin } = useSession();
+  const { snap, user, audit, signOut, can, isAdmin } = useSession();
   const toast = useToast();
   const cfg = snap.org.config;
   const ret = retentionPolicy(cfg);
   const mayWrite = can("settings.write");
   const mayReset = can("settings.delete");
-  const [f, setF] = useState({ orgName: cfg.orgName, entityCode: cfg.entityCode, cisDays: String(cfg.sla.cisDays), offerReminderDays: String(cfg.sla.offerReminderDays), followUpMonths: String(cfg.sla.followUpMonths), exitedMonths: String(ret.exitedMonths), completedMonths: String(ret.completedMonths), dormantMonths: String(ret.dormantMonths), warnDays: String(ret.warnDays), channels: cfg.channels.join("\n"), branches: cfg.branches.join("\n") });
+  const [f, setF] = useState(() => settingsForm(cfg, ret));
   const [confirm, setConfirm] = useState<"reset" | null>(null);
   const [typed, setTyped] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -38,17 +51,19 @@ export function SettingsPage() {
       };
       o.config.channels = f.channels.split("\n").map((s) => s.trim()).filter(Boolean);
       o.config.branches = f.branches.split("\n").map((s) => s.trim()).filter(Boolean);
+      const vapid = f.vapidPublicKey.trim();
+      o.config.push = vapid ? { ...(o.config.push ?? {}), vapidPublicKey: vapid } : undefined;
       return o;
     });
-    await log("Settings updated");
+    await audit(EVENTS.settingsUpdated(diffChanges(settingsForm(cfg, ret), f, SETTINGS_FIELDS)));
     toast("Settings saved");
   };
-  const reset = async () => { if (!mayReset) return; await store.resetAll(); setConfirm(null); signOut(); };
+  const reset = async () => { if (!mayReset || !user) return; await store.resetAll(); await store.audit(EVENTS.workspaceReset(), user); setConfirm(null); signOut(); };
   const backup = () => {
     if (!isAdmin) return;
     const data = { exportedAt: new Date().toISOString(), org: snap.org, cases: snap.cases, audit: snap.audit, prompts: snap.prompts };
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })); a.download = `lpl-pms-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click();
-    void log("Workspace backup exported");
+    void audit(EVENTS.backupExported());
     toast("Backup downloaded");
   };
   const restore = async (file: File) => {
@@ -57,17 +72,18 @@ export function SettingsPage() {
       const data = JSON.parse(await file.text()) as { org?: OrgState; cases?: CasesState; audit?: AuditState; prompts?: PromptsState };
       if (!data.org?.config || !data.cases?.cases) throw new Error("not a backup");
       await store.replaceAll(data.org, data.cases, data.audit ?? { entries: [], rev: 0 }, data.prompts?.prompts ? data.prompts : undefined);
-      await log("Workspace restored from backup", file.name);
+      await audit(EVENTS.backupRestored(file.name, { cases: Object.keys(data.cases.cases).length, users: Object.keys(data.org.users ?? {}).length, audit: data.audit?.entries.length ?? 0 }));
       toast("Backup restored");
     } catch { toast("That file is not a valid workspace backup", "bad"); }
   };
 
   return (
     <div className="stack">
-      <div className="page-head">
-        <div><h1>Settings</h1><p>Organisation, service levels and reference lists.</p></div>
-        <div className="actions"><button type="button" className="btn btn-primary" onClick={save} disabled={!mayWrite}><Save aria-hidden />Save settings</button></div>
-      </div>
+      <PageHeader
+        title="Settings"
+        context={<>Organisation, service levels and reference lists.</>}
+        actions={<><button type="button" className="btn btn-primary" onClick={save} disabled={!mayWrite}><Save aria-hidden />Save settings</button></>}
+      />
       <div className="grid grid-2 stagger">
         <Panel title="Organisation">
           <div className="stack-sm">
@@ -94,6 +110,12 @@ export function SettingsPage() {
         </Panel>
         <Panel title="Enquiry channels">
           <TextArea label="Channels offered at enquiry" value={f.channels} onChange={(v) => setF({ ...f, channels: v })} rows={7} hint="One per line. The seven checklist channels are the standard set." />
+        </Panel>
+        <Panel title="Notifications">
+          <div className="stack-sm">
+            <p className="xs muted">Browser push notifications are delivered by the push-dispatch function on the server. Generate a VAPID key pair once (for example <code>npx web-push generate-vapid-keys</code>), put the private key and a dispatch secret in the function's secrets, and paste the public key here. Nothing secret is stored in the workspace.</p>
+            <TextField label="VAPID public key" value={f.vapidPublicKey} onChange={(v) => setF({ ...f, vapidPublicKey: v })} hint="Leave empty to keep push switched off; the bell and in-app notifications work regardless." autoComplete="off" />
+          </div>
         </Panel>
         <ServerPanel />
         <Panel title="Workspace">
@@ -132,7 +154,7 @@ export function SettingsPage() {
  * its own, because row-level security decides what a signed-in user may see.
  */
 function ServerPanel() {
-  const { snap, signOut } = useSession();
+  const { snap, signOut, audit } = useSession();
   const toast = useToast();
   const current = readServerConfig();
   const connected = snap.backend === "server";
@@ -168,6 +190,7 @@ function ServerPanel() {
   };
 
   const connect = async () => {
+    await audit(EVENTS.serverConnected(f.url.trim()));
     writeServerConfig({ url: f.url.trim(), anonKey: f.anonKey.trim() });
     await store.reconnect();
     toast("Connected to the server. Sign in with a server account.");
@@ -175,6 +198,7 @@ function ServerPanel() {
   };
 
   const disconnect = async () => {
+    await audit(EVENTS.serverDisconnected());
     writeServerConfig(null);
     await store.reconnect();
     setConfirmOff(false);

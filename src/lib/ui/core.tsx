@@ -2,11 +2,12 @@
  * Lyceum Placements — Placement Management System
  * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
  * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ *
+ * Core primitives: tones, pills, notices, panels, page headers, avatars, tabs, switch, fields.
  */
-import React, { createContext, useCallback, useContext, useEffect, useId, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { X, Check, AlertCircle, Info, AlertTriangle, CircleCheck, Inbox, ShieldAlert } from "lucide-react";
-import type { FieldDef } from "./spine";
+import React, { useEffect, useId, useRef, useState } from "react";
+import { Check, AlertCircle, Info, AlertTriangle, CircleCheck, ShieldAlert } from "lucide-react";
+import type { FieldDef } from "../spine";
 
 // ---------- tones ----------
 
@@ -31,7 +32,7 @@ export function Pill({ tone = "neutral", children, className = "", icon }: { ton
   return <span className={`pill pill-${tone} ${className}`}>{icon}{children}</span>;
 }
 
-const toneIcon: Record<Tone, React.ReactNode> = {
+export const toneIcon: Record<Tone, React.ReactNode> = {
   neutral: <Info aria-hidden />, ok: <CircleCheck aria-hidden />, warn: <AlertTriangle aria-hidden />, bad: <AlertCircle aria-hidden />, info: <Info aria-hidden />, navy: <Info aria-hidden />, gold: <ShieldAlert aria-hidden />,
 };
 
@@ -56,33 +57,29 @@ export function Panel({ title, action, children, className = "", flush = false, 
   );
 }
 
-export function Empty({ title, hint, action }: { title: string; hint?: string; action?: React.ReactNode }) {
-  return (
-    <div className="empty">
-      <Inbox aria-hidden />
-      <p className="e-title">{title}</p>
-      {hint && <p className="e-hint">{hint}</p>}
-      {action && <div className="mt1">{action}</div>}
-    </div>
-  );
+/** One quiet row of list filters on the second surface tier. */
+export function FilterBar({ label, children, className = "" }: { label: string; children: React.ReactNode; className?: string }) {
+  return <div className={`filter-bar surface-2 ${className}`} role="search" aria-label={label}>{children}</div>;
 }
 
-export function Kpi({ label, value, sub, tone = "neutral", onClick, icon }: { label: string; value: React.ReactNode; sub?: React.ReactNode; tone?: Tone; onClick?: () => void; icon?: React.ReactNode }) {
-  const inner = (
-    <>
-      <span className="k-label">{icon}{label}</span>
-      <span className="k-value"><CountUp value={value} /></span>
-      {sub && <span className="k-sub">{sub}</span>}
-    </>
+/** Page title row: title, one line of context, actions on the right. */
+export function PageHeader({ title, context, actions, children, className = "" }: { title: React.ReactNode; context?: React.ReactNode; actions?: React.ReactNode; children?: React.ReactNode; className?: string }) {
+  return (
+    <div className={`page-head ${className}`}>
+      <div className="grow" style={{ minWidth: 0 }}>
+        <h1>{title}</h1>
+        {context && <p>{context}</p>}
+        {children}
+      </div>
+      {actions && <div className="actions">{actions}</div>}
+    </div>
   );
-  const cls = `kpi card t-${tone} ${onClick ? "click" : ""}`;
-  return onClick ? <button type="button" className={cls} onClick={onClick}>{inner}</button> : <div className={cls}>{inner}</div>;
 }
 
 /** Animated number for numeric values; passes other content through. Respects reduced motion. */
 export function CountUp({ value }: { value: React.ReactNode }) {
   const isNum = typeof value === "number";
-  const [n, setN] = useState(isNum ? 0 : 0);
+  const [n, setN] = useState(0);
   useEffect(() => {
     if (!isNum) return;
     const target = value as number;
@@ -96,94 +93,12 @@ export function CountUp({ value }: { value: React.ReactNode }) {
   return <>{isNum ? n : value}</>;
 }
 
-const AV_COLORS = ["", "blue", "green"];
+const AV_COLORS = ["", "blue", "green", "amber", "rose", "cyan"];
 export function Avatar({ name, size = 32, tone }: { name: string; size?: number; tone?: "ink" | "blue" | "green" | "orange" }) {
   const ini = name.split(/\s+/).filter(Boolean).slice(0, 2).map((s) => s[0]?.toUpperCase()).join("") || "?";
   const h = name.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
-  const cls = tone === "ink" ? "ink" : tone === "blue" ? "blue" : tone === "green" ? "green" : tone === "orange" ? "" : AV_COLORS[h % 3];
+  const cls = tone === "ink" ? "ink" : tone === "blue" ? "blue" : tone === "green" ? "green" : tone === "orange" ? "" : AV_COLORS[h % AV_COLORS.length];
   return <span className={`avatar ${cls}`} style={{ width: size, height: size, fontSize: Math.round(size * 0.38) }} aria-hidden="true">{ini}</span>;
-}
-
-// ---------- modal (focus trap, escape, restore focus) ----------
-
-/**
- * Dialog. The frame is capped at 90% of the viewport height and only the body scrolls, so a
- * long form (Create student, Create profile) is always completable: the header stays put and
- * the `.modal-f` action row sticks to the bottom of the scroll area.
- *
- * Rendered through a portal on document.body. A `position: fixed` element is positioned
- * against the nearest transformed ancestor, and the page-entry animation leaves one behind,
- * so a dialog rendered in place was centred on the page box rather than the viewport and
- * could run off screen. Outside the app tree it is always centred on the viewport.
- */
-export function Modal({ open, onClose, title, children, width = 560, describedBy, subtitle }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; width?: number; describedBy?: string; subtitle?: string }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const titleId = useId();
-  const subId = useId();
-  // Callers pass inline closures, so `onClose` changes identity on every render. The trap
-  // effect must not depend on it, or focus would be ejected from the dialog on each keystroke.
-  const onCloseRef = useRef(onClose);
-  useEffect(() => { onCloseRef.current = onClose; });
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.activeElement as HTMLElement | null;
-    const el = ref.current;
-    const focusables = () => Array.from(el?.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])') ?? []);
-    const first = focusables().find((f) => !f.hasAttribute("data-close")) ?? focusables()[0];
-    const t = window.setTimeout(() => first?.focus(), 30);
-    const h = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); onCloseRef.current(); return; }
-      if (e.key === "Tab") {
-        const f = focusables(); if (!f.length) return;
-        const i = f.indexOf(document.activeElement as HTMLElement);
-        if (e.shiftKey && (i <= 0)) { e.preventDefault(); f[f.length - 1].focus(); }
-        else if (!e.shiftKey && i === f.length - 1) { e.preventDefault(); f[0].focus(); }
-      }
-    };
-    document.addEventListener("keydown", h);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { window.clearTimeout(t); document.removeEventListener("keydown", h); document.body.style.overflow = prevOverflow; prev?.focus?.(); };
-  }, [open]);
-  if (!open) return null;
-  return createPortal(
-    <div className="modal-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div ref={ref} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={describedBy ?? (subtitle ? subId : undefined)} className="modal" style={{ maxWidth: width }}>
-        {/* A div, not <header>: portaled to <body>, a <header> would register as a second banner landmark. */}
-        <div className="modal-h">
-          <div style={{ minWidth: 0 }}>
-            <h2 id={titleId} style={{ fontSize: 18 }}>{title}</h2>
-            {subtitle && <p id={subId} className="ui xs muted mt1">{subtitle}</p>}
-          </div>
-          <button type="button" data-close onClick={onClose} aria-label="Close dialog" className="icon-btn"><X aria-hidden /></button>
-        </div>
-        <div className="modal-b">{children}</div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-// ---------- toasts ----------
-
-interface ToastMsg { id: number; text: string; tone: Tone }
-const ToastCtx = createContext<(text: string, tone?: Tone) => void>(() => {});
-export function useToast() { return useContext(ToastCtx); }
-export function ToastProvider({ children }: { children: React.ReactNode }) {
-  const [list, setList] = useState<ToastMsg[]>([]);
-  const push = useCallback((text: string, tone: Tone = "ok") => {
-    const id = Date.now() + Math.random();
-    setList((l) => [...l.slice(-3), { id, text, tone }]);
-    window.setTimeout(() => setList((l) => l.filter((t) => t.id !== id)), 4200);
-  }, []);
-  return (
-    <ToastCtx.Provider value={push}>
-      {children}
-      <div className="toasts" aria-live="polite" aria-atomic="false">
-        {list.map((t) => <div key={t.id} className={`toast ${t.tone}`}>{toneIcon[t.tone]}<span>{t.text}</span></div>)}
-      </div>
-    </ToastCtx.Provider>
-  );
 }
 
 // ---------- tabs ----------

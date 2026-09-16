@@ -6,6 +6,7 @@
 import React, { useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { useSession, LiveBadge, Copyright, ThemeToggle, useDocumentTitle, APP_VERSION } from "@/App";
+import { EVENTS } from "@/lib/audit";
 import { store, hashPassword, uid, nowIso, passwordProblem, MIN_PASSWORD_LENGTH } from "@/lib/store";
 import { BRAND_LOGO, COPYRIGHT, ORG_SHORT, PRODUCT, DOC_REF } from "@/lib/brand";
 import { Notice, useToast, TextField } from "@/lib/ui";
@@ -37,7 +38,7 @@ export function AuthScreen() {
         </div>
       </aside>
       <main className="auth-main" id="main">
-        <div className="auth-card glass page">
+        <div className="auth-card surface page">
           <div className="flex aic jcb g2 mb3">
             <LiveBadge />
             <ThemeToggle />
@@ -95,7 +96,7 @@ function SetupAdmin() {
       if (!profile) { setBusy(false); return setErr("The account was created but no LPL profile came back. Check that supabase/schema.sql has been run against this project."); }
       await store.refresh();
       await store.mutateOrg((o) => { o.config.setupComplete = true; return o; });
-      await store.appendAudit({ actorId: profile.id, actorName: profile.name, actorRole: "admin", action: "Administrator account created", target: profile.email });
+      await store.audit(EVENTS.adminBootstrapped(profile), profile);
       setBusy(false);
       toast("Administrator account created");
       signIn(profile);
@@ -111,7 +112,7 @@ function SetupAdmin() {
       return o;
     });
     if (!org.users[u.id]) { setBusy(false); setErr("An administrator has already been set up. Sign in instead."); return; }
-    await store.appendAudit({ actorId: u.id, actorName: u.name, actorRole: "admin", action: "Administrator account created", target: u.email });
+    await store.audit(EVENTS.adminBootstrapped(u), u);
     setBusy(false);
     toast("Administrator account created");
     signIn(u);
@@ -152,7 +153,7 @@ function SignInForm() {
       if ("error" in r) { setBusy(false); return setErr(r.error); }
       const profile = await server.profileForAuth(r.authId);
       if (!profile) { await server.signOut(); setBusy(false); return setErr("No Lyceum Placements profile is linked to this account. Ask an administrator to add you."); }
-      if (!profile.active) { await server.signOut(); setBusy(false); return setErr("This account has been deactivated. Contact your administrator."); }
+      if (!profile.active) { await store.audit(EVENTS.signInFailed(profile.email, "Account deactivated"), profile).catch(() => undefined); await server.signOut(); setBusy(false); return setErr("This account has been deactivated. Contact your administrator."); }
       await server.touchSignIn(profile.id);
       await store.refresh();
       setBusy(false);
@@ -164,8 +165,10 @@ function SignInForm() {
     const u = store.findUserByEmail(email);
     const hash = await hashPassword(pw);
     setBusy(false);
-    if (!u || u.passwordHash !== hash) return setErr("The email or password is incorrect.");
-    if (!u.active) return setErr("This account has been deactivated. Contact your administrator.");
+    // A failed attempt is recorded against the profile it names. An unknown address has no actor to
+    // attribute, and on a server nothing can be written before a session exists, so neither is logged.
+    if (!u || u.passwordHash !== hash) { if (u) void store.audit(EVENTS.signInFailed(u.email, "Incorrect password"), u).catch(() => undefined); return setErr("The email or password is incorrect."); }
+    if (!u.active) { void store.audit(EVENTS.signInFailed(u.email, "Account deactivated"), u).catch(() => undefined); return setErr("This account has been deactivated. Contact your administrator."); }
     void store.mutateOrg((o) => { if (o.users[u.id]) o.users[u.id].lastSignInAt = nowIso(); return o; });
     signIn(u);
   };

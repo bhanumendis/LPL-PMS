@@ -1,4 +1,4 @@
-# Lyceum Placements — Placement Management System (v4)
+# Lyceum Placements — Placement Management System (v5)
 
 Production build of the Placement Management System for Lyceum Placements (Private) Limited.
 React 18 + Vite 5 + TypeScript, built as a single HTML file, backed by Supabase.
@@ -9,9 +9,10 @@ Built on process document LGH/IMS/PROC/LPL/001: 31 process steps, presented as 9
 
 ```bash
 npm install
-npm run typecheck    # tsc --noEmit
+npm run verify       # typecheck + eslint + vitest (unit, component, axe, performance guards) + contrast
+npm run test         # vitest only
 npm run contrast     # WCAG AAA verification of every design-token pair, both themes
-npm run build        # -> dist/LPL_Placement_Management_System.html (single file)
+npm run build        # verify, then -> dist/LPL_Placement_Management_System.html (single file) and dist/sw.js
 ```
 
 No runtime dependency beyond React and lucide-react. The Supabase client is hand-rolled over `fetch` so the single-file build stays dependency-free. Fonts (Poppins, Lora) are embedded as base64 WOFF2 subsets.
@@ -24,24 +25,72 @@ There is no sample or seed data anywhere in the build. A new workspace starts em
 |---|---|
 | `src/lib/spine.ts` | The 31 steps and their fields; the **9-stage pipeline** (`PIPELINE`) that users see; document checklists, exit codes, data-protection reference tables |
 | `src/lib/logic.ts` | Step state machine, gates, SLA clocks, pipeline progress, retention and transfer engine, analytics |
+| `src/lib/signals.ts` | Derived per-case signals (progress, stage, step, SLA flags, attention items, severity), computed once per snapshot |
 | `src/lib/rbac.ts` | The resource × action permission matrix, case visibility scope, locked cells |
-| `src/lib/store.ts` | Persistence. Picks an adapter: server → `window.storage` → `localStorage` → memory |
-| `src/lib/server.ts` | Supabase adapter — PostgREST for data, GoTrue for identity, Edge Function for account administration |
-| `src/lib/defaults.ts` | Empty-workspace shapes and configuration normalisation |
-| `src/lib/ui.tsx`, `src/lib/charts.tsx` | Design-system primitives and SVG charts |
-| `src/styles/app.css` | Lyceum theme tokens (light and true-black dark), glass surfaces, forced-colours, motion, print |
-| `src/views/*` | Sign-in, staff shell and pages, case workspace, step panel, documents, student shell, Prompt Engineer Workspace |
-| `scripts/contrast.mjs` | Computes every token pair's contrast ratio from the stylesheet; `npm run build` runs it (and the typecheck) first and stops on any pair below AAA |
-| `supabase/schema.sql` | Tables, helper functions, row-level security mirroring the permission matrix, closed-registration trigger, case write guard |
+| `src/lib/store.ts` | Persistence. Picks an adapter: server → `window.storage` → `localStorage` → memory. Also the audit and notification APIs |
+| `src/lib/server.ts` | Supabase adapter — PostgREST for data, GoTrue for identity, RPCs for audit and notifications, Edge Function for account administration |
+| `src/lib/audit.ts` | Typed audit events (`EVENTS.*`) and the field-level diff helper |
+| `src/lib/motion.ts` | View transitions (rail row → case header) and FLIP for reordering lists |
+| `src/lib/ui/*`, `src/lib/charts.tsx` | Design-system primitives (surfaces, page header, stat strip, filter bar, layers and sheets, empty states, skeletons) and SVG charts |
+| `src/shell/*` | Application shell: utility bar, floating dock, mobile tab bar, command palette, route → page, the counsellor student rail |
+| `src/notifications/*` | Bell, notification center, reminders, push subscription and settings |
+| `src/views/home/*` | Role dashboards (administrator, Team Leader, counsellor, student) and their sections |
+| `src/views/*` | Sign-in, case workspace, step panel, documents, staff pages, audit explorer, student pages, Prompt Engineer Workspace |
+| `src/styles/*.css` | `tokens.css` (palette, spectrum, tiers), `base.css`, `components.css`, `shell.css`, `pages.css`, `fonts.css` |
+| `src/sw.ts` | Service worker for Web Push (hosted builds only; built to `dist/sw.js`) |
+| `src/test/*` | Test setup, fixtures, the axe accessibility suite and the performance guards |
+| `scripts/contrast.mjs` | Computes every token pair's contrast ratio from `tokens.css`; `npm run verify` stops on any pair below AAA |
+| `supabase/schema.sql` | Tables, helper functions, row-level security mirroring the permission matrix, closed-registration trigger, case write guard, v5 audit columns, notifications and push subscriptions |
+| `supabase/migrations/20260912_notifications_audit.sql` | The v5 additions for a project already provisioned from the v4 schema |
 | `supabase/functions/admin-users/` | Edge Function through which administrators create sign-ins and set temporary passwords |
+| `supabase/functions/push-dispatch/` | Edge Function that delivers pending notifications to Web Push subscriptions |
+| `server/` | **lpl-api** (Go): serves the same `/rest/v1`, `/auth/v1` and `/functions/v1/admin-users` contract in place of Supabase's request path, against the unchanged schema. See `server/README.md` |
 | `.github/workflows/pages.yml` | Builds and publishes the test site to GitHub Pages on every push to `main` |
+| `.github/workflows/server.yml` | Builds and tests `server/` against a Postgres carrying `supabase/schema.sql` |
 | `LICENSE` | Ownership notice, all rights reserved |
+
+## Application shell
+
+One shell for every signed-in role. A utility bar carries the brand, search (Ctrl/⌘ K), the notification bell and the profile menu; primary navigation is a **floating dock** at the top centre (Alt 1–9 jumps to a destination). Under 1024 px the dock becomes a bottom tab bar with a More sheet. Pages render on a solid ground; only floating things (bar, dock, popovers, sheets, toasts) are glass.
+
+### Counsellor student rail
+
+Roles whose case scope is *assigned* get a rail on the **left edge that is always minimised**: a launcher and one progress ring per assigned student, the ring drawn in the colour of the student's current stage, with a severity dot and an unseen-updates dot. Pressing the launcher slides the **quick view** open from the left: a caseload summary (active, needing attention, average progress), search, and every student grouped by urgency with their **percentage, stage (n of 9), current step**, nine-stage track and most urgent item. Each row expands inline to a student summary (service-level clocks, documents, gate, recent updates, shortcuts to the current step, documents and timeline). Pressing a ring in the strip opens the panel with that student already expanded. Escape or the scrim closes it; opening a student closes it and navigates to the case workspace. On phones the same quick view opens as a bottom sheet from the Students tab.
+
+## Dashboards
+
+- **Counsellor:** greeting and one-line position; stat strip (active, overdue, awaiting Team Leader, documents to review); needs-attention queue with direct actions; caseload by stage (click filters the caseload); recent activity; performance (collapsed).
+- **Team Leader:** decisions awaiting me with Review deep links; service-level exposure; open cases by stage; counsellor load; team performance.
+- **Administrator:** system position; stage flow and counsellor load; compliance strip; system health; recent activity from the audit log; performance.
+- **Student:** where the application stands, what is needed next, counsellor and key details.
+
+## Notifications
+
+Rows in `public.notifications` are written by the database, not the browser: `notify_case_change()` (trigger `cases_notify`) fans out assignment, gate, document and profile events to the right recipients, and `emit_sla_notifications()` raises due-soon and overdue clock notifications — schedule it (for example `select cron.schedule('lpl-sla', '*/15 * * * *', 'select public.emit_sla_notifications()')`). The client polls `notification_state()` with the workspace tick and pages with `notifications_page`; `mark_notifications_read` / `mark_all_notifications_read` are own-rows only. `prune_notifications(days)` trims history.
+
+**Web Push** (hosted builds only; the single-file build cannot register a service worker): generate a VAPID key pair (`npx web-push generate-vapid-keys`), paste the public key in Settings → Notifications, deploy `push-dispatch` with secrets `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` and `DISPATCH_SECRET`, then invoke it from a Database Webhook on insert into `public.notifications` or from pg_cron every minute with the header `x-lpl-dispatch-secret`.
+
+## Audit
+
+Every action is a typed event (`src/lib/audit.ts`). Each row keeps the v4 `action` label, `target` and `detail`, and adds `event_type`, `entity_type`, `entity_id`, `entity_label`, `outcome`, `source`, `session_id`, `summary`, and for updates a field-level `changes` diff (special-category fields are redacted before they leave the browser) plus `meta`. Sign-in and sign-out are recorded; failed sign-ins are recorded against a known profile in browser-storage mode.
+
+The audit log is no longer part of the workspace snapshot. The **Audit log** page reads `audit_page(...)` — filtered by date range, person, event type, record type and free text, keyset-paginated 50 at a time, default window 30 days — and loads `audit_detail(id)` only when a row is opened. Export pages through the same RPC with the current filters. Rows written before v5 show as *Legacy*. Browser-storage modes keep the 600-entry blob and apply the same filters locally.
+
+## Design system and motion
+
+- **Tiers:** `surface` (solid content), `surface-2` (inset), `float` (the only glass).
+- **Spectrum:** eight professional hues (blue, indigo, violet, cyan, teal, emerald, amber, rose), each with a graphic, a text and a tint token, all verified in both themes. Stat tiles rotate hues automatically (solid gradient icon badge, accent edge, faint wash); charts, funnel rows and the nine stages (`--stage-1` … `--stage-9`) use the spectrum; semantic state (overdue, due soon, done) keeps its own colours so meaning never depends on decoration.
+- **Motion:** opening a case morphs the rail row into the workspace header where View Transitions exist; reordering rail rows glide (FLIP); pages rise 6 px on entry and the entry cascade plays on a page's first visit only. Everything is skipped under `prefers-reduced-motion`.
+
+## Testing
+
+`npm run verify` runs typecheck, eslint and vitest: unit tests for logic, signals, audit, store, motion and hooks; component tests for the shell, dock, palette, rail, notifications, dashboards, cases list and audit explorer; an axe-core WCAG 2.1 A/AA suite over the main screens for every role in both themes; and performance guards (a quiet poll re-renders nothing, the server load reads no audit rows, blur stays on the float tier). Colour contrast is verified by `npm run contrast` rather than axe because jsdom does not compute styles.
 
 ## Theme
 
 Lyceum palette: royal blue `#1240b3`, navy `#0b1f4b`, white `#ffffff`, midnight black `#000000`.
 Light mode is white ground with black ink; dark mode is a pure `#000000` ground with white ink and a sky-royal accent. There are no grey surfaces in dark mode — panels separate by hairline and glow.
-Every text token is verified at **7:1 or better (WCAG 2.1 AAA)** against every surface it is composed on, and every graphic token at 3:1, in both themes. Run `npm run contrast` to see the table; it reads the tokens from `app.css`, so the numbers cannot drift from what ships.
+Every text token is verified at **7:1 or better (WCAG 2.1 AAA)** against every surface it is composed on, and every graphic token at 3:1, in both themes — including the eight spectrum hues. Run `npm run contrast` to see the table; it reads the tokens from `tokens.css`, so the numbers cannot drift from what ships.
 
 ## Access control
 
@@ -117,6 +166,8 @@ Without a server the application stores everything in the browser, which is fine
 
 Alternatively, set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` at build time (see `.env.example`) to bake the connection in. A connection entered in Settings overrides the build-time one.
 
+**Go service instead of Supabase's request path.** `server/` holds `lpl-api`, which speaks the same contract this file uses, so the project URL entered in Settings (or baked in at build time) can point at it. The built file's Content-Security-Policy only admits `*.supabase.co`; when the API lives elsewhere, build with `LPL_CONNECT_SRC="https://api.example.com" npm run build` so that origin is admitted too. See `server/README.md` and `server/docs/CUTOVER.md`.
+
 **Never put the `service_role` key in the browser.** Only the anon key belongs here; it grants nothing on its own.
 
 After the first connection, disable "Allow new users to sign up" under Authentication → Providers → Email. The database already refuses public sign-ups; this is the second lock.
@@ -178,10 +229,11 @@ With no server, passwords are hashed client-side (SHA-256) and stored with the w
 
 ## Status and outstanding checks
 
-Production audit of 5 September 2026 (`LPL_PMS_v4_Production_Audit_2026-09-05.md` in the parent folder): typecheck clean, 93 token pairs at AAA in both themes, axe-core clean on 20 screens × 2 themes, 40 audit findings resolved.
+v5.0.0 (13 September 2026, branch `redesign/v5`): typecheck, eslint, 111 vitest tests including the axe suite, and every token pair at AAA in both themes, all green; `server/` Go tests green. Checked in a browser at 1440, 768 and 375 px for the administrator, Team Leader and counsellor: no page scrolls sideways, no section fails to draw. The single-file build is 747 KB, above the 700 KB budget the redesign set; the growth is the notification, audit, rail and motion code, not assets. The acceptance record is `docs/superpowers/plans/2026-09-12-acceptance.md`.
 
 Still to be done by hand before real student data goes in:
 
-1. Exercise the Supabase path end to end on a real project (schema, Edge Function, bootstrap, create profile with sign-in, complete a step, Team Leader decision). The server code is consistent but has not yet run against a live Postgres.
-2. A screen-reader pass (NVDA or VoiceOver) through "complete a step" and the student profile form.
+1. Exercise the Supabase path end to end on a real project (schema or migration, both Edge Functions, bootstrap, create profile with sign-in, complete a step, Team Leader decision, notification fan-out, `emit_sla_notifications` on a schedule, audit explorer paging, a push to a real device). The server code is consistent and unit-tested but has not yet run against a live project.
+2. A screen-reader pass (NVDA or VoiceOver) through "complete a step", the student rail quick view and the student profile form.
 3. Windows forced-colours mode on a real machine.
+4. Workspace backups taken while connected to a server no longer include audit rows; export the audit log from the Audit log page instead.

@@ -8,14 +8,15 @@ import { RotateCcw, Lock } from "lucide-react";
 import { useSession } from "@/App";
 import { store } from "@/lib/store";
 import { ROLES, ROLE_LABEL, RESOURCE_DEFS, PERMISSIONS, ACTION_LABEL, ACTION_HELP, DEFAULT_PERMISSIONS, DEFAULT_CASE_SCOPE, CASE_SCOPE_LABEL, permissionLabel, roleHas, isLocked, caseScopeOf, normalizePermissions } from "@/lib/rbac";
-import { useToast, Notice, Switch, Field } from "@/lib/ui";
+import { useToast, Notice, Switch, Field, PageHeader } from "@/lib/ui";
 import { ACTIONS, type CaseScope, type Permission, type Role } from "@/lib/types";
+import { EVENTS } from "@/lib/audit";
 
 const SCOPES: CaseScope[] = ["none", "own", "assigned", "all"];
 const isScope = (v: string): v is CaseScope => (SCOPES as string[]).includes(v);
 
 export function RolesPage() {
-  const { snap, log, can } = useSession();
+  const { snap, audit, can } = useSession();
   const toast = useToast();
   const config = snap.org.config;
   const editable = can("role.write");
@@ -43,27 +44,29 @@ export function RolesPage() {
       o.config.permissions = normalizePermissions(o.config.permissions);
       return o;
     });
-    await log(has ? "Permission removed" : "Permission granted", `${r} · ${perm}`);
+    await audit(EVENTS.permissionChanged(perm, r, !has));
     toast(`${has ? "Removed" : "Granted"} “${permissionLabel(perm)}” for ${ROLE_LABEL[r]}`);
   };
   const reset = async () => {
     await store.mutateOrg((o) => { o.config.permissions = normalizePermissions(DEFAULT_PERMISSIONS); o.config.caseScope = { ...DEFAULT_CASE_SCOPE }; return o; });
-    await log("Permissions reset to default");
+    await audit(EVENTS.permissionsReset());
     toast("Permissions restored to the standard model");
   };
   const setScope = async (v: string) => {
     if (scopeLocked || !isScope(v)) return;
+    const from = config.caseScope?.[role];
     await store.mutateOrg((o) => { o.config.caseScope = { ...DEFAULT_CASE_SCOPE, ...(o.config.caseScope ?? {}), [role]: v }; return o; });
-    await log("Case scope changed", `${role} · ${v}`);
+    await audit(EVENTS.caseScopeChanged(role, v, from));
     toast(`${ROLE_LABEL[role]}: ${CASE_SCOPE_LABEL[v].toLowerCase()}`);
   };
 
   return (
     <div className="stack">
-      <div className="page-head">
-        <div><h1>Roles and permissions</h1><p>Each resource exposes the same five actions. Administrator is the system owner and holds every cell; the Prompt Engineer Workspace cannot be granted to any other role. Changes apply immediately.</p></div>
-        {editable && <div className="actions"><button type="button" className="btn btn-secondary" onClick={reset}><RotateCcw aria-hidden />Restore standard model</button></div>}
-      </div>
+      <PageHeader
+        title="Roles and permissions"
+        context="Each resource exposes the same five actions. Administrator is the system owner and holds every cell; the Prompt Engineer Workspace cannot be granted to any other role. Changes apply immediately."
+        actions={editable ? <button type="button" className="btn btn-secondary" onClick={reset}><RotateCcw aria-hidden />Restore standard model</button> : undefined}
+      />
 
       <div className="seg" role="tablist" aria-label="Role">
         {ROLES.map((r, i) => (

@@ -37,6 +37,7 @@ jobs:
           mkdir -p site
           cp dist/index.html site/index.html
           cp dist/LPL_Placement_Management_System.html site/LPL_Placement_Management_System.html
+          cp dist/sw.js site/sw.js
           touch site/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:

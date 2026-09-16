@@ -11,6 +11,7 @@ import { STEP_BY_N } from "@/lib/spine";
 import { addDocument, reviewDocument, removeDocument, docsForStep, fmtDateTime } from "@/lib/logic";
 import { Pill, statusTone, Modal, useToast, TextArea } from "@/lib/ui";
 import type { CaseRecord, DocItem } from "@/lib/types";
+import { EVENTS } from "@/lib/audit";
 
 const fmtSize = (n: number) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 const DOC_STATUS: Record<string, string> = { uploaded: "Awaiting review", accepted: "Accepted", rejected: "Returned" };
@@ -20,7 +21,7 @@ const MAX = 25 * 1048576;
 const MAX_FILES = 1;
 
 export function DocumentChecklist({ c, step, canUpload, canReview, canDownload = false, canDelete = false, canRead = true, compact = false }: { c: CaseRecord; step: 10 | 15; canUpload: boolean; canReview: boolean; canDownload?: boolean; canDelete?: boolean; canRead?: boolean; compact?: boolean }) {
-  const { user, log } = useSession();
+  const { user, audit } = useSession();
   const toast = useToast();
   const def = STEP_BY_N[step];
   const fileRef = useRef<HTMLInputElement>(null);
@@ -38,7 +39,7 @@ export function DocumentChecklist({ c, step, canUpload, canReview, canDownload =
     const ok = /\.(pdf|jpe?g|png|docx?)$/i.test(file.name);
     if (!ok) { toast("Upload a PDF, JPG, PNG or Word file", "bad"); return; }
     await store.mutateCase(c.id, (x) => addDocument(x, step, kind, { name: file.name, size: file.size, type: file.type }, user));
-    await log("Document uploaded", c.ref, `${kindLabel(kind)} — ${file.name}`);
+    await audit(EVENTS.documentUploaded(c, kindLabel(kind), file.name));
     toast(`${file.name} uploaded`);
   };
   const pick = (kind: string) => { setPendingKind(kind); fileRef.current?.click(); };
@@ -59,7 +60,7 @@ export function DocumentChecklist({ c, step, canUpload, canReview, canDownload =
     if (!review || !user) return;
     if (!review.accept && !note.trim()) return;
     await store.mutateCase(c.id, (x) => reviewDocument(x, review.d.id, review.accept, note.trim(), user));
-    await log(review.accept ? "Document accepted" : "Document returned", c.ref, review.d.fileName);
+    await audit(EVENTS.documentReviewed(c, review.d.fileName, review.accept, note.trim() || undefined));
     toast(review.accept ? "Document accepted" : "Document returned to the student");
     setReview(null); setNote("");
   };
@@ -67,7 +68,7 @@ export function DocumentChecklist({ c, step, canUpload, canReview, canDownload =
     if (!removing || !user) return;
     const d = removing;
     await store.mutateCase(c.id, (x) => removeDocument(x, d.id, user));
-    await log("Document removed", c.ref, `${kindLabel(d.kind)} — ${d.fileName}`);
+    await audit(EVENTS.documentRemoved(c, kindLabel(d.kind), d.fileName));
     toast("Document removed");
     setRemoving(null);
   };

@@ -16,6 +16,35 @@
 import type { AuditEntry, AuditState, CaseRecord, CasesState, OrgState, PromptsState, User } from "./types";
 import { DEFAULT_RETENTION, MIN_PASSWORD_LENGTH, defaultAudit, defaultCases, defaultConfig, defaultOrg, defaultPrompts, normalizeConfig } from "./defaults";
 import { SupabaseBackend, readServerConfig } from "./server";
+import type { NotificationRow, NotificationState } from "@/notifications/types";
+import { fanout } from "@/notifications/fanout";
+import type { PushDevice, PushSubscriptionInput } from "@/notifications/push";
+import type { AuditEvent, AuditEventType, EntityType } from "./audit";
+import { sessionId } from "./hooks";
+
+/** Filters for one page of the audit log. `before` is the `at` of the last row already shown. */
+export interface AuditQuery { before?: string | null; actorId?: string; eventType?: AuditEventType; entityType?: EntityType; entityId?: string; from?: string; to?: string; q?: string; limit?: number }
+
+export const AUDIT_WINDOW_DAYS = 30;
+
+/** The browser-storage form of audit_page: same filters, same default window, same ordering. */
+export function filterAudit(entries: AuditEntry[], q: AuditQuery, now = Date.now()): AuditEntry[] {
+  const from = q.from ?? new Date(now - AUDIT_WINDOW_DAYS * 86_400_000).toISOString();
+  const text = q.q?.trim().toLowerCase();
+  const limit = Math.min(Math.max(q.limit ?? 50, 1), 200);
+  return entries
+    .filter((e) => (!q.before || e.at < q.before)
+      && (!q.actorId || e.actorId === q.actorId)
+      && (!q.eventType || e.eventType === q.eventType)
+      && (!q.entityType || e.entityType === q.entityType)
+      && (!q.entityId || e.entityId === q.entityId)
+      && e.at >= from
+      && (!q.to || e.at <= q.to)
+      && (!text || [e.action, e.summary, e.target, e.entityLabel, e.actorName].some((v) => v?.toLowerCase().includes(text))))
+    .sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id))
+    .slice(0, limit)
+    .map(({ changes, meta, ...rest }) => ({ ...rest, hasChanges: !!changes?.length || !!meta }));
+}
 
 export { DEFAULT_RETENTION, MIN_PASSWORD_LENGTH, defaultConfig, defaultOrg, defaultCases, defaultAudit, defaultPrompts };
 
@@ -38,9 +67,23 @@ export interface Backend {
   saveCases(next: CasesState, prev: CasesState): Promise<void>;
   savePrompts(next: PromptsState, prev: PromptsState): Promise<void>;
   pushAudit(entry: AuditEntry): Promise<void>;
+  auditPage(q: AuditQuery): Promise<AuditEntry[]>;
+  auditDetail(id: string): Promise<Pick<AuditEntry, "changes" | "meta"> | null>;
   replaceAll(w: Workspace): Promise<void>;
   clear(): Promise<void>;
   watch?(fn: () => void): () => void;
+  // Notifications. On a server the rows are written by triggers and scoped by RLS, so the
+  // user id is informational there; the browser adapters filter by it.
+  notificationState(userId: string): Promise<NotificationState>;
+  notificationsPage(userId: string, before: string | null, limit: number, unreadOnly: boolean): Promise<NotificationRow[]>;
+  markNotificationsRead(userId: string, ids: string[]): Promise<number>;
+  markAllNotificationsRead(userId: string): Promise<number>;
+  /** Browser adapters only: the reference fan-out writes rows here. Absent on the server. */
+  appendNotifications?(rows: NotificationRow[]): Promise<void>;
+  // Web Push subscriptions, one row per device; own rows only.
+  savePushSubscription(userId: string, sub: PushSubscriptionInput): Promise<void>;
+  revokePushSubscription(userId: string, endpoint: string): Promise<void>;
+  listPushSubscriptions(userId: string): Promise<PushDevice[]>;
 }
 
 declare global {
@@ -56,7 +99,8 @@ declare global {
 
 // ---------- keys and defaults ----------
 
-const K = { org: "lpl:pms:org", cases: "lpl:pms:cases", audit: "lpl:pms:audit", prompts: "lpl:pms:prompts" };
+const K = { org: "lpl:pms:org", cases: "lpl:pms:cases", audit: "lpl:pms:audit", prompts: "lpl:pms:prompts", notifications: "lpl:pms:notifications", push: "lpl:pms:push" };
+const NOTIFICATIONS_PER_RECIPIENT = 500;
 
 export function defaultWorkspace(): Workspace { return { org: defaultOrg(), cases: defaultCases(), audit: defaultAudit(), prompts: defaultPrompts() }; }
 
@@ -98,6 +142,13 @@ abstract class KvBackend implements Backend {
     fresh.rev = (fresh.rev ?? 0) + 1;
     await this.kv.set(K.audit, JSON.stringify(fresh));
   }
+  async auditPage(q: AuditQuery): Promise<AuditEntry[]> {
+    return filterAudit(parse(await this.kv.get(K.audit), defaultAudit()).entries, q);
+  }
+  async auditDetail(id: string): Promise<Pick<AuditEntry, "changes" | "meta"> | null> {
+    const e = parse(await this.kv.get(K.audit), defaultAudit()).entries.find((x) => x.id === id);
+    return e ? { changes: e.changes, meta: e.meta } : null;
+  }
   async replaceAll(w: Workspace) {
     await this.kv.set(K.org, JSON.stringify(w.org));
     await this.kv.set(K.cases, JSON.stringify(w.cases));
@@ -105,9 +156,74 @@ abstract class KvBackend implements Backend {
     await this.kv.set(K.prompts, JSON.stringify(w.prompts));
   }
   async clear() {
-    await this.kv.del(K.org); await this.kv.del(K.cases); await this.kv.del(K.audit); await this.kv.del(K.prompts);
+    await this.kv.del(K.org); await this.kv.del(K.cases); await this.kv.del(K.audit); await this.kv.del(K.prompts); await this.kv.del(K.notifications);
+  }
+
+  // ---- notifications: one JSON blob, newest first, capped per recipient ----
+  private async readNotifications(): Promise<NotificationRow[]> {
+    const raw = await this.kv.get(K.notifications);
+    if (!raw) return [];
+    try { const p = JSON.parse(raw) as { rows?: NotificationRow[] }; return Array.isArray(p?.rows) ? p.rows : []; } catch { return []; }
+  }
+  private async writeNotifications(rows: NotificationRow[]) { await this.kv.set(K.notifications, JSON.stringify({ rows })); }
+  async appendNotifications(rows: NotificationRow[]) {
+    if (!rows.length) return;
+    const cur = await this.readNotifications();
+    const keys = new Set(cur.map((r) => r.dedupeKey).filter(Boolean));
+    const fresh = rows.filter((r) => !r.dedupeKey || !keys.has(r.dedupeKey));
+    if (!fresh.length) return;
+    const counts = new Map<string, number>();
+    const next = [...fresh, ...cur].filter((r) => { const n = (counts.get(r.recipientId) ?? 0) + 1; counts.set(r.recipientId, n); return n <= NOTIFICATIONS_PER_RECIPIENT; });
+    await this.writeNotifications(next);
+  }
+  async notificationState(userId: string): Promise<NotificationState> {
+    const mine = (await this.readNotifications()).filter((r) => r.recipientId === userId);
+    return { unread: mine.filter((r) => !r.readAt).length, latest: mine.reduce<string | null>((m, r) => (m && m > r.at ? m : r.at), null) };
+  }
+  async notificationsPage(userId: string, before: string | null, limit: number, unreadOnly: boolean): Promise<NotificationRow[]> {
+    return (await this.readNotifications())
+      .filter((r) => r.recipientId === userId && (!unreadOnly || !r.readAt) && (!before || r.at < before))
+      .sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id))
+      .slice(0, limit);
+  }
+  async markNotificationsRead(userId: string, ids: string[]): Promise<number> {
+    const set = new Set(ids);
+    const rows = await this.readNotifications();
+    const now = new Date().toISOString();
+    let n = 0;
+    for (const r of rows) if (r.recipientId === userId && set.has(r.id) && !r.readAt) { r.readAt = now; n++; }
+    if (n) await this.writeNotifications(rows);
+    return n;
+  }
+  async markAllNotificationsRead(userId: string): Promise<number> {
+    const rows = await this.readNotifications();
+    const now = new Date().toISOString();
+    let n = 0;
+    for (const r of rows) if (r.recipientId === userId && !r.readAt) { r.readAt = now; n++; }
+    if (n) await this.writeNotifications(rows);
+    return n;
+  }
+
+  // ---- push subscriptions (kept so the settings card is demonstrable without a server) ----
+  private async readPush(): Promise<PushRowLocal[]> {
+    const raw = await this.kv.get(K.push);
+    if (!raw) return [];
+    try { const p = JSON.parse(raw) as { rows?: PushRowLocal[] }; return Array.isArray(p?.rows) ? p.rows : []; } catch { return []; }
+  }
+  async savePushSubscription(userId: string, sub: PushSubscriptionInput) {
+    const rows = (await this.readPush()).filter((r) => r.endpoint !== sub.endpoint);
+    rows.unshift({ userId, endpoint: sub.endpoint, userAgent: sub.userAgent, createdAt: new Date().toISOString(), lastSeenAt: new Date().toISOString() });
+    await this.kv.set(K.push, JSON.stringify({ rows }));
+  }
+  async revokePushSubscription(userId: string, endpoint: string) {
+    const rows = (await this.readPush()).filter((r) => !(r.userId === userId && r.endpoint === endpoint));
+    await this.kv.set(K.push, JSON.stringify({ rows }));
+  }
+  async listPushSubscriptions(userId: string): Promise<PushDevice[]> {
+    return (await this.readPush()).filter((r) => r.userId === userId).map((r) => ({ endpoint: r.endpoint, createdAt: r.createdAt, lastSeenAt: r.lastSeenAt, userAgent: r.userAgent }));
   }
 }
+interface PushRowLocal { userId: string; endpoint: string; userAgent?: string; createdAt: string; lastSeenAt: string }
 
 class SharedBackend extends KvBackend {
   kind = "shared" as const;
@@ -279,6 +395,89 @@ class Store {
   }
 
   subscribe(fn: Listener) { this.listeners.add(fn); fn(this.snap); return () => { this.listeners.delete(fn); }; }
+
+  // ---------- notifications ----------
+
+  private currentUserId: string | null = null;
+  /** Unread count and newest timestamp for the signed-in user; polled with the workspace tick. */
+  notif: NotificationState = { unread: 0, latest: null };
+  private notifListeners = new Set<(s: NotificationState) => void>();
+
+  /** The signed-in profile id; the shell sets it on sign-in and clears it on sign-out. */
+  setCurrentUser(id: string | null) {
+    if (id === this.currentUserId) return;
+    this.currentUserId = id;
+    this.notif = { unread: 0, latest: null };
+    this.emitNotif();
+    if (id) void this.pollNotifications();
+  }
+  get currentUser(): string | null { return this.currentUserId; }
+  onNotifications(fn: (s: NotificationState) => void) { this.notifListeners.add(fn); fn(this.notif); return () => { this.notifListeners.delete(fn); }; }
+  private emitNotif() { this.notifListeners.forEach((l) => l(this.notif)); }
+
+  /** One small read per tick; a failure leaves the last known state and retries next tick. */
+  async pollNotifications() {
+    const uid = this.currentUserId;
+    if (!uid) return;
+    try {
+      const s = await this.backend.notificationState(uid);
+      if (uid !== this.currentUserId) return;
+      if (s.unread !== this.notif.unread || s.latest !== this.notif.latest) { this.notif = s; this.emitNotif(); }
+    } catch { /* transient; the next tick retries */ }
+  }
+  notificationsPage(before: string | null, limit: number, unreadOnly: boolean): Promise<NotificationRow[]> {
+    const uid = this.currentUserId;
+    if (!uid) return Promise.resolve([]);
+    return this.backend.notificationsPage(uid, before, limit, unreadOnly);
+  }
+  async markNotificationsRead(ids: string[]): Promise<number> {
+    const uid = this.currentUserId;
+    if (!uid || !ids.length) return 0;
+    const n = await this.backend.markNotificationsRead(uid, ids);
+    await this.pollNotifications();
+    return n;
+  }
+  async markAllNotificationsRead(): Promise<number> {
+    const uid = this.currentUserId;
+    if (!uid) return 0;
+    const n = await this.backend.markAllNotificationsRead(uid);
+    await this.pollNotifications();
+    return n;
+  }
+  // ---- push subscriptions ----
+  savePushSubscription(sub: PushSubscriptionInput): Promise<void> {
+    const uid = this.currentUserId;
+    if (!uid) return Promise.reject(new Error("Sign in first."));
+    return this.backend.savePushSubscription(uid, sub);
+  }
+  revokePushSubscription(endpoint: string, userId: string | null = this.currentUserId): Promise<void> {
+    if (!userId) return Promise.resolve();
+    return this.backend.revokePushSubscription(userId, endpoint);
+  }
+  listPushSubscriptions(): Promise<PushDevice[]> {
+    const uid = this.currentUserId;
+    if (!uid) return Promise.resolve([]);
+    return this.backend.listPushSubscriptions(uid);
+  }
+
+  /**
+   * Browser-storage mode has no database trigger, so the store runs the reference fan-out
+   * after a case write. On a server this is a no-op: notify_case_change() does the same work
+   * inside the transaction, attributed by the database.
+   */
+  private async fanoutLocal(prev: CasesState, next: CasesState) {
+    const uid = this.currentUserId;
+    if (!uid || !this.backend.appendNotifications) return;
+    const ctx = { actorId: uid, users: this.snap.org.users, config: this.snap.org.config, now: nowIso() };
+    const rows: NotificationRow[] = [];
+    for (const c of Object.values(next.cases)) {
+      const before = prev.cases[c.id];
+      if (!before || before.rev !== c.rev || before.updatedAt !== c.updatedAt) rows.push(...fanout(before ?? null, c, ctx));
+    }
+    if (!rows.length) return;
+    await this.backend.appendNotifications(rows);
+    void this.pollNotifications();
+  }
   /** Called with a readable message whenever a write to the backend fails; the shell shows it as a toast. */
   onError(fn: (message: string) => void) { this.errorListeners.add(fn); return () => { this.errorListeners.delete(fn); }; }
   private emit() { this.listeners.forEach((l) => l(this.snap)); }
@@ -296,6 +495,7 @@ class Store {
   private lastVersion: string | null = null;
 
   async refresh() {
+    void this.pollNotifications();
     try {
       // Server: ask for a one-row version first and skip the full download when nothing moved.
       const server = this.server;
@@ -309,8 +509,6 @@ class Store {
       const changed = !this.snap.loaded
         || org.config.rev !== this.snap.org.config.rev
         || cases.rev !== this.snap.cases.rev
-        || audit.rev !== this.snap.audit.rev
-        || audit.entries[0]?.id !== this.snap.audit.entries[0]?.id
         || prompts.rev !== this.snap.prompts.rev
         || usersSignature(org.users) !== usersSignature(this.snap.org.users)
         || Object.keys(cases.cases).length !== Object.keys(this.snap.cases.cases).length
@@ -364,6 +562,7 @@ class Store {
       next.rev = (next.rev ?? 0) + 1;
       await this.backend.saveCases(next, prev);
       this.update({ cases: next, syncedAt: Date.now() });
+      await this.fanoutLocal(prev, next);
       return next;
     });
   }
@@ -393,6 +592,18 @@ class Store {
       return next;
     });
   }
+
+  /**
+   * Records a typed event as the signed-in user. On a server the attribution trigger
+   * overwrites the actor columns from the token, so the client values are only a fallback.
+   */
+  async audit(event: AuditEvent, actor?: Pick<User, "id" | "name" | "role">) {
+    const u = actor ?? (this.currentUserId ? this.snap.org.users[this.currentUserId] : undefined);
+    if (!u) return;
+    await this.appendAudit({ ...event, actorId: u.id, actorName: u.name, actorRole: u.role, outcome: event.outcome ?? "success", source: "web", sessionId: sessionId() });
+  }
+  auditPage(q: AuditQuery): Promise<AuditEntry[]> { return this.backend.auditPage(q); }
+  auditDetail(id: string): Promise<Pick<AuditEntry, "changes" | "meta"> | null> { return this.backend.auditDetail(id); }
 
   async appendAudit(entry: Omit<AuditEntry, "id" | "at">) {
     return this.withLock(async () => {

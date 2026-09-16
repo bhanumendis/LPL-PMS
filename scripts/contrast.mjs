@@ -12,7 +12,7 @@
  */
 import fs from "node:fs";
 
-const css = fs.readFileSync(new URL("../src/styles/app.css", import.meta.url), "utf8");
+const css = fs.readFileSync(new URL("../src/styles/tokens.css", import.meta.url), "utf8");
 
 function block(selector) {
   const i = css.indexOf(selector);
@@ -102,6 +102,36 @@ const PAIRS = [
   ["--on-green", "--green", 3, "check icon on done marker"],
   ["--glass-solid", "--accent", 3, "switch knob on the checked track"],
   ["--glass-solid", "--line-strong", 3, "switch knob on the unchecked track"],
+  // v5 surface tiers
+  ["--ink", "--surface", 7, "panel text"],
+  ["--ink2", "--surface", 7, "panel secondary text"],
+  ["--muted", "--surface", 7, "panel captions"],
+  ["--accent-text", "--surface", 7, "links on panels"],
+  ["--ink", "--surface-2", 7, "text on inset surfaces"],
+  ["--ink2", "--surface-2", 7, "secondary text on inset surfaces"],
+  ["--muted", "--surface-2", 7, "captions on inset surfaces"],
+  ["--ink", "--float-strong", 7, "dock, popovers, notification center"],
+  ["--ink2", "--float-strong", 7, "secondary text on float surfaces"],
+  ["--muted", "--float-strong", 7, "captions on float surfaces"],
+  ["--accent-text", "--float-strong", 7, "links on float surfaces"],
+  ["--on-accent", "--unread", 7, "unread count badge"],
+  ["--unread", "--surface", 3, "unread dot"],
+  ["--sev-bad", "--surface", 3, "severity marker (overdue)"],
+  ["--sev-warn", "--surface", 3, "severity marker (due soon)"],
+  ["--sev-info", "--surface", 3, "severity marker (review)"],
+  ["--accent", "--float-strong", 3, "dock active pill edge"],
+  ["--white", "--alert-badge", 7, "attention count on the rail launcher"],
+  ["--white", "--rail-launch-to", 3, "rail launcher icon"],
+  ["--white", "--rail-launch-from", 3, "rail launcher icon"],
+  // v5 spectrum: every hue as icon/series graphic and as text, on panels and on its own tint
+  ...["blue", "indigo", "violet", "cyan", "teal", "emerald", "amber", "rose"].flatMap((h) => [
+    [`--hue-${h}`, "--surface", 3, `${h} series and stage marker`],
+    ["--on-hue", `--hue-${h}`, 3, `icon on the solid ${h} badge`],
+    [`--hue-${h}`, `--hue-${h}-soft`, 3, `${h} icon on its tint`],
+    [`--hue-${h}-text`, "--surface", 7, `${h} label on panels`],
+    [`--hue-${h}-text`, `--hue-${h}-soft`, 7, `${h} label on its tint`],
+    ["--on-accent", `--hue-${h}-text`, 7, `funnel count on the ${h} bar`],
+  ]),
 ];
 
 let failures = 0;

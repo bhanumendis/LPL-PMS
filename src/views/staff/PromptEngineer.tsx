@@ -12,8 +12,9 @@ import { Plus, Upload, Download, Save, Copy, Trash2, RotateCcw } from "lucide-re
 import { useSession } from "@/App";
 import { store, uid, nowIso } from "@/lib/store";
 import { fmtDateTime } from "@/lib/logic";
-import { Panel, Empty, Pill, Notice, Modal, TextField, SelectField, TextArea, Field, useToast, type Tone } from "@/lib/ui";
+import { Panel, EmptyState, Pill, Notice, Modal, TextField, SelectField, TextArea, Field, useToast, PageHeader, type Tone } from "@/lib/ui";
 import type { PromptStatus, PromptTemplate, PromptVersion, User } from "@/lib/types";
+import { EVENTS } from "@/lib/audit";
 
 const STATUSES: PromptStatus[] = ["draft", "review", "approved", "retired"];
 const STATUS_LABEL: Record<PromptStatus, string> = { draft: "Draft", review: "In review", approved: "Approved", retired: "Retired" };
@@ -89,7 +90,7 @@ const sameDraft = (a: Draft, b: Draft) => JSON.stringify({ ...a, note: "" }) ===
 // ---------- page ----------
 
 export function PromptEngineerPage() {
-  const { isAdmin, user, snap, route, go, log } = useSession();
+  const { isAdmin, user, snap, route, go, audit } = useSession();
   const toast = useToast();
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"all" | PromptStatus>("all");
@@ -108,7 +109,7 @@ export function PromptEngineerPage() {
   const create = async () => {
     const t = blankTemplate(user);
     await store.mutatePrompts((s) => { s.prompts[t.id] = t; return s; });
-    await log("Prompt template created", t.title, t.id);
+    await audit(EVENTS.promptCreated(t));
     toast("Template created");
     select(t.id);
   };
@@ -116,14 +117,14 @@ export function PromptEngineerPage() {
     const at = nowIso();
     const copy: PromptTemplate = { ...t, id: uid(), title: `${t.title} (copy)`, tags: [...t.tags], sampleInputs: { ...t.sampleInputs }, version: 1, history: [], createdAt: at, updatedAt: at, createdBy: user.id, updatedBy: user.id };
     await store.mutatePrompts((s) => { s.prompts[copy.id] = copy; return s; });
-    await log("Prompt template duplicated", copy.title, `from ${t.id}`);
+    await audit(EVENTS.promptDuplicated(copy, t.id));
     toast(`Duplicated as “${copy.title}”`);
     select(copy.id);
   };
   const remove = async () => {
     const t = confirm; if (!t) return;
     await store.mutatePrompts((s) => { delete s.prompts[t.id]; return s; });
-    await log("Prompt template deleted", t.title, t.id);
+    await audit(EVENTS.promptDeleted(t));
     setConfirm(null); toast("Template deleted");
     if (route.id === t.id) select(undefined);
   };
@@ -137,7 +138,7 @@ export function PromptEngineerPage() {
       s.prompts[t.id] = { ...prev, title, description: d.description.trim(), model: d.model.trim(), temperature: toTemperature(d.temperature), maxTokens: toMaxTokens(d.maxTokens), tags: parseTags(d.tags), status: d.status, body: d.body, sampleInputs: { ...d.sampleInputs }, version, history: [...prev.history, entry].slice(-HISTORY_CAP), updatedAt: at, updatedBy: user.id };
       return s;
     });
-    await log("Prompt template saved", title, `v${version}`);
+    await audit(EVENTS.promptSaved({ id: t.id, title }, version));
     toast(`Saved “${title}” as v${version}`);
   };
   const exportJson = (items: PromptTemplate[], name: string) => {
@@ -145,7 +146,7 @@ export function PromptEngineerPage() {
     const url = URL.createObjectURL(new Blob([JSON.stringify(items.length === 1 ? items[0] : items, null, 2)], { type: "application/json" }));
     const a = document.createElement("a"); a.href = url; a.download = name; a.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    void log("Prompt templates exported", items.length === 1 ? items[0].title : `${items.length} templates`);
+    void audit(EVENTS.promptsExported(items));
     toast(items.length === 1 ? "Template exported" : `${items.length} templates exported`);
   };
   const importFile = async (file: File) => {
@@ -158,7 +159,7 @@ export function PromptEngineerPage() {
       const taken = new Set(Object.keys(snap.prompts.prompts));
       for (const t of items) { if (taken.has(t.id)) t.id = uid(); taken.add(t.id); }
       await store.mutatePrompts((s) => { for (const t of items) s.prompts[t.id] = t; return s; });
-      await log("Prompt templates imported", file.name, `${items.length} template${items.length === 1 ? "" : "s"}`);
+      await audit(EVENTS.promptsImported(file.name, items.length));
       toast(`Imported ${items.length} template${items.length === 1 ? "" : "s"}`);
       select(items[0].id);
     } catch { toast("That file is not a prompt template export", "bad"); }
@@ -166,15 +167,16 @@ export function PromptEngineerPage() {
 
   return (
     <div className="stack">
-      <div className="page-head">
-        <div><h1>Prompt Engineer Workspace</h1><p>Author, preview and version the prompt templates the organisation relies on. Variables are written as {"{{name}}"} and filled from sample inputs for preview.</p></div>
-        <div className="actions">
+      <PageHeader
+        title="Prompt Engineer Workspace"
+        context={<>Author, preview and version the prompt templates the organisation relies on. Variables are written as {"{{name}}"} and filled from sample inputs for preview.</>}
+        actions={<>
           <button type="button" className="btn btn-primary" onClick={create}><Plus aria-hidden />New template</button>
           <button type="button" className="btn btn-secondary" onClick={() => fileRef.current?.click()}><Upload aria-hidden />Import</button>
           <input ref={fileRef} type="file" accept="application/json,.json" multiple={false} hidden aria-label="Import a prompt template export" onChange={(e) => { const f = e.target.files?.[0]; if (f) void importFile(f); e.target.value = ""; }} />
           <button type="button" className="btn btn-secondary" disabled={!prompts.length} onClick={() => exportJson(prompts, `prompt-templates-${new Date().toISOString().slice(0, 10)}.json`)}><Download aria-hidden />Export all</button>
-        </div>
-      </div>
+        </>}
+      />
       <Notice tone="info">Templates are authored, previewed and versioned here. No model is called from the browser and no student data is sent anywhere.</Notice>
 
       <div className="pe-layout">
@@ -188,7 +190,7 @@ export function PromptEngineerPage() {
               {STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
             </select>
           </div>
-          {list.length === 0 ? <Empty title={prompts.length ? "No templates match" : "No templates yet"} hint={prompts.length ? "Try a different search or status." : "Create a template or import an export."} /> : (
+          {list.length === 0 ? <EmptyState glyph="inbox" title={prompts.length ? "No templates match" : "No templates yet"} reason={prompts.length ? "Try a different search or status." : "Create a template or import an export."} /> : (
             <ul className="pe-list" style={{ padding: 8 }}>
               {list.map((p) => (
                 <li key={p.id}>
@@ -202,7 +204,7 @@ export function PromptEngineerPage() {
           )}
         </Panel>
 
-        {!selected ? <Empty title="Select a template" hint="Choose a template on the left or create a new one." /> : (
+        {!selected ? <EmptyState glyph="inbox" title="Select a template" reason="Choose a template on the left or create a new one." /> : (
           <Editor key={selected.id} t={selected} onSave={save} onDuplicate={() => duplicate(selected)} onExport={() => exportJson([selected], `prompt-${slug(selected.title)}-v${selected.version}.json`)} onDelete={() => setConfirm(selected)} />
         )}
       </div>

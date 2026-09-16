@@ -3,30 +3,52 @@
  * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
  * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
  */
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Search, UserRoundPlus } from "lucide-react";
 import { useSession } from "@/App";
 import { store, uid, nowIso, hashPassword, passwordProblem } from "@/lib/store";
 import { canReadCase, caseScopeOf } from "@/lib/rbac";
 import { PIPELINE, STEP_BY_N, DESTINATIONS } from "@/lib/spine";
-import { currentStep, currentPipeline, slaFlags, latestGate, fmtDateTime, newCaseRef, mkEvent, todayInput, pendingReviewCount, caseProgress, caseDestination, daysSince } from "@/lib/logic";
-import { Pill, statusTone, STATUS_LABEL, Modal, Notice, useToast, Empty, Avatar, TextField, SelectField, TextArea } from "@/lib/ui";
-import { Bar } from "@/lib/charts";
+import { currentPipeline, slaFlags, latestGate, fmtDateTime, newCaseRef, mkEvent, todayInput, pendingReviewCount, caseDestination, daysSince } from "@/lib/logic";
+import { useCaseSignals, type CaseSignals } from "@/lib/signals";
+import { BP, useMediaQuery } from "@/lib/hooks";
+import { Pill, statusTone, STATUS_LABEL, Modal, Notice, useToast, EmptyState, Avatar, TextField, SelectField, TextArea, PageHeader, FilterBar, CardList, MiniStageTrack, SeverityChip } from "@/lib/ui";
 import type { CaseRecord, User } from "@/lib/types";
+import { EVENTS } from "@/lib/audit";
+
+/** The case's most urgent attention label as one chip, with a count of the rest. */
+function AttentionChips({ s }: { s?: CaseSignals }) {
+  if (!s || s.attention.length === 0) return <span className="muted">—</span>;
+  const [top, ...rest] = s.attention;
+  return (
+    <span className="flex aic wrap g1">
+      <SeverityChip severity={top.severity}>{top.label}</SeverityChip>
+      {rest.length > 0 && <span className="ui xs muted" title={rest.map((a) => a.label).join(" · ")}>+{rest.length} more</span>}
+    </span>
+  );
+}
 
 /** Shown beside an admin-users failure when the Edge Function is not on the project yet. */
 const NOT_DEPLOYED_HINT = "Deploy the admin-users function (supabase/functions/admin-users) to issue sign-ins from here.";
 
 export function CasesPage() {
-  const { cases, users, snap, user, can, go } = useSession();
+  const { cases, users, snap, user, can, go, route } = useSession();
   const config = snap.org.config;
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
-  const [stage, setStage] = useState("");
+  // Deep links: #/cases/stage:{id} presets the stage filter; #/cases/new opens the create dialog.
+  const [stage, setStage] = useState(route.id?.startsWith("stage:") ? route.id.slice(6) : "");
   const [owner, setOwner] = useState("");
   const [attention, setAttention] = useState(false);
   const [assignFor, setAssignFor] = useState<CaseRecord | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(route.id === "new");
+  // A deep link that arrives while the page is already mounted (dashboard stage flow, palette) still applies.
+  useEffect(() => {
+    if (route.id?.startsWith("stage:")) setStage(route.id.slice(6));
+    if (route.id === "new") setCreating(true);
+  }, [route.id]);
+  const signals = useCaseSignals();
+  const phone = useMediaQuery(BP.mobile);
 
   const scope = caseScopeOf(config, user!.role);
   const all = scope === "all";
@@ -52,12 +74,13 @@ export function CasesPage() {
 
   return (
     <div className="stack">
-      <div className="page-head">
-        <div><h1>{all ? "Cases" : "My caseload"}</h1><p>{list.length} of {visible.length} case{visible.length === 1 ? "" : "s"}{attention ? " needing attention" : ""}</p></div>
-        <div className="actions">{canCreate && <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}><UserRoundPlus aria-hidden />Create student</button>}</div>
-      </div>
+      <PageHeader
+        title={all ? "Cases" : "My caseload"}
+        context={<>{list.length} of {visible.length} case{visible.length === 1 ? "" : "s"}{attention ? " needing attention" : ""}</>}
+        actions={canCreate ? <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}><UserRoundPlus aria-hidden />Create student</button> : undefined}
+      />
 
-      <div className="panel" style={{ padding: 12 }}>
+      <FilterBar label="Filter cases">
         <div className={`filters ${all ? "cols-3" : "cols-2"}`}>
           <div className="input-wrap f-search"><Search aria-hidden /><label htmlFor={searchId} className="sr-only">Search cases</label><input id={searchId} className="input" placeholder="Search reference, name, email or destination" value={q} onChange={(e) => setQ(e.target.value)} type="search" /></div>
           <div><label className="sr-only" htmlFor={`${searchId}-st`}>Status</label><select id={`${searchId}-st`} className="input" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All statuses</option>{Object.entries(STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
@@ -65,10 +88,35 @@ export function CasesPage() {
           {all && <div><label className="sr-only" htmlFor={`${searchId}-ow`}>Counsellor</label><select id={`${searchId}-ow`} className="input" value={owner} onChange={(e) => setOwner(e.target.value)}><option value="">All counsellors</option><option value="unassigned">Unassigned</option>{counsellors.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>}
           <button type="button" className={`btn btn-secondary ${attention ? "on" : ""}`} aria-pressed={attention} onClick={() => setAttention((v) => !v)}>Needs attention</button>
         </div>
-      </div>
+      </FilterBar>
 
       {list.length === 0 ? (
-        <Empty title={visible.length === 0 ? (all ? "No cases yet" : "No cases assigned to you") : "No cases match these filters"} hint={visible.length === 0 ? (all ? "Create the first student case here." : "Cases appear here once an administrator or Team Leader assigns them to you.") : "Clear a filter or search for a different reference."} action={visible.length === 0 && canCreate ? <button type="button" className="btn btn-primary btn-sm" onClick={() => setCreating(true)}><UserRoundPlus aria-hidden />Create student</button> : undefined} />
+        <EmptyState glyph={visible.length === 0 ? "cases" : "search"} title={visible.length === 0 ? (all ? "No cases yet" : "No cases assigned to you") : "No cases match these filters"} reason={visible.length === 0 ? (all ? "Create the first student case here." : "Cases appear here once an administrator or Team Leader assigns them to you.") : "Clear a filter or search for a different reference."} action={visible.length === 0 && canCreate ? <button type="button" className="btn btn-primary btn-sm" onClick={() => setCreating(true)}><UserRoundPlus aria-hidden />Create student</button> : undefined} />
+      ) : phone ? (
+        <CardList
+          items={list}
+          keyOf={(c) => c.id}
+          label={all ? "Cases" : "My caseload"}
+          render={(c) => {
+            const s = signals.get(c.id);
+            const ownerU = c.counsellorId ? users[c.counsellorId] : undefined;
+            return (
+              <div className="case-card">
+                <div className="flex aic jcb g2">
+                  <button type="button" className="row-btn ui strong" onClick={() => go({ page: "case", caseId: c.id })}>{c.ref}</button>
+                  <Pill tone={statusTone(c.status)}>{STATUS_LABEL[c.status]}</Pill>
+                </div>
+                <p className="ui small strong truncate">{c.student.name}</p>
+                <p className="xs muted">Stage {currentPipeline(c).n} of 9 · {currentPipeline(c).name}{ownerU ? ` · ${ownerU.name}` : ""}</p>
+                {s && <MiniStageTrack stages={s.stages} size="xs" />}
+                <div className="flex aic wrap g2">
+                  <AttentionChips s={s} />
+                  {!ownerU && canAssign && c.status === "open" && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAssignFor(c)}><UserRoundPlus aria-hidden />Assign</button>}
+                </div>
+              </div>
+            );
+          }}
+        />
       ) : (
         <div className="panel table-wrap">
           <table className="tbl" style={{ minWidth: 1180 }}>
@@ -77,16 +125,10 @@ export function CasesPage() {
             </thead>
             <tbody>
               {list.map((c) => {
-                const n = currentStep(c);
-                const pl = currentPipeline(c);
-                const flags = slaFlags(c, config);
-                const breach = flags.filter((f) => f.state === "breached").length;
-                const soon = flags.filter((f) => f.state === "due-soon").length;
-                const gate = ([16, 19] as const).find((g) => latestGate(c, g)?.status === "pending");
-                const returned = ([16, 19] as const).find((g) => { const l = latestGate(c, g); return l?.status === "returned" && !l.addressedAt; });
-                const docs = pendingReviewCount(c);
+                const s = signals.get(c.id);
+                const n = s?.currentStep ?? null;
+                const pl = s?.stage ?? currentPipeline(c);
                 const ownerU = c.counsellorId ? users[c.counsellorId] : undefined;
-                const p = caseProgress(c);
                 const open = () => go({ page: "case", caseId: c.id });
                 return (
                   <tr key={c.id} className="row-link" onClick={open}>
@@ -94,21 +136,12 @@ export function CasesPage() {
                     <td><p className="primary">{c.student.name}</p><p className="sub">{c.student.email}</p></td>
                     <td>{caseDestination(c)}</td>
                     <td>{n ? <><p>{n}. {STEP_BY_N[n].title}</p><p className="sub">Stage {pl.n} of 9 · {pl.name}</p></> : <span className="muted">All steps complete</span>}</td>
-                    <td style={{ minWidth: 140 }}><div className="flex aic g2"><Bar pct={p.pct} tone={c.status === "completed" ? "ok" : c.status === "exited" ? "bad" : ""} label={`${c.ref} progress`} /><span className="ui xs tnum" style={{ width: 34 }}>{p.pct}%</span></div><p className="sub">{p.done} of {p.applicable} steps recorded</p></td>
+                    <td className="progress-cell">{s && <><div className="flex aic g2"><MiniStageTrack stages={s.stages} label={`${c.ref}: stage ${pl.n} of 9, ${s.progress.pct}% of steps recorded`} /><span className="ui xs tnum">{s.progress.pct}%</span></div><p className="sub">{s.progress.done} of {s.progress.applicable} steps recorded</p></>}</td>
                     <td onClick={(e) => e.stopPropagation()}>
                       {ownerU ? <span className="flex aic g2"><Avatar name={ownerU.name} size={26} />{ownerU.name}</span> : canAssign && c.status === "open" ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAssignFor(c)}><UserRoundPlus aria-hidden />Assign</button> : <span className="muted">Unassigned</span>}
                     </td>
                     <td><Pill tone={statusTone(c.status)}>{STATUS_LABEL[c.status]}</Pill></td>
-                    <td>
-                      <div className="flex wrap g1">
-                        {breach > 0 && <Pill tone="bad">SLA breached</Pill>}
-                        {soon > 0 && breach === 0 && <Pill tone="warn">Due soon</Pill>}
-                        {gate && <Pill tone="info">Gate {gate} pending</Pill>}
-                        {returned && <Pill tone="bad">Gate {returned} returned</Pill>}
-                        {docs > 0 && <Pill tone="warn">{docs} to review</Pill>}
-                        {!breach && !soon && !gate && !returned && !docs && <span className="muted">—</span>}
-                      </div>
-                    </td>
+                    <td><AttentionChips s={s} /></td>
                     <td className="muted nowrap">{fmtDateTime(c.updatedAt)}</td>
                   </tr>
                 );
@@ -125,7 +158,7 @@ export function CasesPage() {
 }
 
 export function AssignDialog({ c, onClose }: { c: CaseRecord; onClose: () => void }) {
-  const { users, user, log, cases } = useSession();
+  const { users, user, audit, cases } = useSession();
   const toast = useToast();
   const counsellors = Object.values(users).filter((u) => (u.role === "counsellor" || u.role === "team_leader") && u.active);
   const [pick, setPick] = useState(c.counsellorId ?? "");
@@ -141,7 +174,7 @@ export function AssignDialog({ c, onClose }: { c: CaseRecord; onClose: () => voi
       x.events.unshift(mkEvent(user, "assign", prev ? `Reassigned from ${prev} to ${target.name}` : `Assigned to ${target.name}`, 1));
       return x;
     });
-    await log(c.counsellorId ? "Case reassigned" : "Case assigned", c.ref, target.name);
+    await audit(EVENTS.caseAssigned(c, target.name, c.counsellorId ? users[c.counsellorId]?.name ?? "previous counsellor" : undefined));
     toast(`${c.ref} assigned to ${target.name}`);
     onClose();
     } catch { /* reported by the store */ } finally { setBusy(false); }
@@ -175,7 +208,7 @@ export function AssignDialog({ c, onClose }: { c: CaseRecord; onClose: () => voi
  * from Staff.
  */
 function CreateStudentDialog({ onClose }: { onClose: () => void }) {
-  const { snap, user, users, log, go, can } = useSession();
+  const { snap, user, users, audit, go, can } = useSession();
   const toast = useToast();
   const config = snap.org.config;
   const canAccount = can("account.write");
@@ -231,19 +264,19 @@ function CreateStudentDialog({ onClose }: { onClose: () => void }) {
       createdAt: nowIso(), updatedAt: nowIso(), rev: 1,
     };
     await store.mutateCases((s) => { s.cases[c.id] = c; return s; });
-    await log("Case opened", ref, f.source);
+    await audit(EVENTS.caseOpened(c, f.source));
     if (issue && studentId) {
       if (server) {
         const r = await server.createSignIn({ appUserId: studentId, email, password: f.password, name, phone });
         if (!r.ok) {
-          await log("Sign-in not issued", email, r.error);
+          await audit(EVENTS.signInNotIssued(email, r.error));
           setBusy(false);
           toast(`Case ${ref} opened`);
           setCreated({ caseId: c.id, ref, error: r.error, notDeployed: !!r.notDeployed });
           return;
         }
       }
-      await log("Sign-in issued", email, "Student");
+      await audit(EVENTS.signInIssued(email, "Student"));
     }
     toast(`Case ${ref} opened`);
     finish(c.id);

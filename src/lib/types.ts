@@ -224,6 +224,8 @@ export interface OrgConfig {
   channels: string[];
   branches: string[];
   caseCounter: number;
+  /** Web Push: the public half of the VAPID pair used by the push-dispatch function. */
+  push?: { vapidPublicKey?: string };
   rev: number;
 }
 
@@ -241,6 +243,19 @@ export interface AuditEntry {
   action: string;
   target?: string;
   detail?: string;
+  // v5 structured columns; absent on legacy rows.
+  eventType?: import("./audit").AuditEventType;
+  entityType?: import("./audit").EntityType;
+  entityId?: string;
+  entityLabel?: string;
+  outcome?: "success" | "failure";
+  source?: string;
+  sessionId?: string;
+  summary?: string;
+  /** Present on browser-storage rows and on audit_detail; the paged server list carries `hasChanges` instead. */
+  changes?: import("./audit").Change[];
+  meta?: Record<string, unknown>;
+  hasChanges?: boolean;
 }
 
 export interface AuditState {

@@ -12,11 +12,12 @@ import { derivedStatus, stepState, completeStep, currentStep, saveStepValues, ma
 import { FieldInput, ValueDisplay, isVisible, missingRequired, Pill, statusTone, Notice, useToast, TextArea } from "@/lib/ui";
 import { DocumentChecklist } from "@/views/Documents";
 import type { CaseRecord } from "@/lib/types";
+import { EVENTS } from "@/lib/audit";
 
 export function StepPanel({ c, n, canWork, onAdvance, focusHeading = false }: { c: CaseRecord; n: number; canWork: boolean; onAdvance?: (next: number) => void; focusHeading?: boolean }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => { if (focusHeading) headingRef.current?.focus(); }, [focusHeading, n]);
-  const { user, users, can, log, snap } = useSession();
+  const { user, users, can, audit, snap } = useSession();
   const toast = useToast();
   const def = STEP_BY_N[n];
   const st = stepState(c, n);
@@ -25,6 +26,8 @@ export function StepPanel({ c, n, canWork, onAdvance, focusHeading = false }: { 
   const [err, setErr] = useState<string[]>([]);
   const [gateNote, setGateNote] = useState("");
   const [decision, setDecision] = useState<"approve" | "return" | null>(null);
+  // Keyed on the case revision, not the case object: a poll tick that did not change this case must not discard the draft.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setValues(stepState(c, n).values); setErr([]); setGateNote(""); setDecision(null); }, [c.id, n, c.rev]);
 
   const sensitiveOk = can("sensitive.read");
@@ -53,21 +56,21 @@ export function StepPanel({ c, n, canWork, onAdvance, focusHeading = false }: { 
     if (isDoc && !docsReady) { setErr(["All required documents must be accepted"]); return; }
     setErr([]);
     const updated = await store.mutateCase(c.id, (x) => completeStep(x, n, values, user));
-    await log(`Step ${n} completed`, c.ref, def.title);
+    await audit(EVENTS.stepCompleted(c, n));
     toast(`Step ${n} recorded`);
     if (updated && updated.status === "open") { const next = currentStep(updated); if (next && next !== n && onAdvance) onAdvance(next); }
   };
   const na = async () => {
     if (!user) return;
     const updated = await store.mutateCase(c.id, (x) => markNotApplicable(x, n, user));
-    await log(`Step ${n} marked not applicable`, c.ref, def.title);
+    await audit(EVENTS.stepNa(c, n));
     toast(`Step ${n} marked not applicable`);
     if (updated) { const next = currentStep(updated); if (next && next !== n && onAdvance) onAdvance(next); }
   };
   const reopen = async () => {
     if (!user) return;
     await store.mutateCase(c.id, (x) => reopenStep(x, n, user));
-    await log(`Step ${n} reopened`, c.ref, def.title);
+    await audit(EVENTS.stepReopened(c, n));
     toast(`Step ${n} reopened`);
   };
   const toGate = async () => {
@@ -77,14 +80,14 @@ export function StepPanel({ c, n, canWork, onAdvance, focusHeading = false }: { 
     if (def.gate === 16 && !requiredDocsAccepted(c, 15)) { setErr(["All required visa file documents (step 15) must be accepted before financial verification is submitted"]); return; }
     setErr([]);
     await store.mutateCase(c.id, (x) => submitGate(x, def.gate!, values, user));
-    await log(`Gate ${def.gate} submitted`, c.ref, def.title);
+    await audit(EVENTS.gateSubmitted(c, def.gate));
     toast("Submitted to the Team Leader");
   };
   const decide = async () => {
     if (!user || !gate || !decision) return;
     if (decision === "return" && !gateNote.trim()) return;
     const updated = await store.mutateCase(c.id, (x) => decideGate(x, gate.id, decision === "approve", gateNote.trim(), user));
-    await log(decision === "approve" ? `Gate ${gate.gate} approved` : `Gate ${gate.gate} returned`, c.ref, gateNote.trim() || undefined);
+    await audit(EVENTS.gateDecided(c, gate.gate, decision === "approve", gateNote.trim() || undefined, gate.round));
     toast(decision === "approve" ? "Gate approved" : "Returned with suggestions");
     if (updated && decision === "approve") { const next = currentStep(updated); if (next && next !== n && onAdvance) onAdvance(next); }
   };
@@ -93,7 +96,7 @@ export function StepPanel({ c, n, canWork, onAdvance, focusHeading = false }: { 
     if (!gateNote.trim()) { setErr(["Describe how the suggestions were addressed"]); return; }
     setErr([]);
     await store.mutateCase(c.id, (x) => { addressGate(x, gate.id, gateNote.trim(), user); return submitGate(x, def.gate!, values, user); });
-    await log(`Gate ${gate.gate} resubmitted`, c.ref, gateNote.trim());
+    await audit(EVENTS.gateResubmitted(c, gate.gate, gateNote.trim(), gate.round + 1));
     toast("Resubmitted to the Team Leader");
   };
 
@@ -176,7 +179,7 @@ export function StepPanel({ c, n, canWork, onAdvance, focusHeading = false }: { 
           )}
           {err.length > 0 && <div className="mt3"><Notice tone="bad" role="alert">{err.length === 1 && !err[0].includes(",") && err[0].length > 40 ? err[0] : <>Complete the required fields: <b>{err.join(", ")}</b></>}</Notice></div>}
           {workable && status === "active" && (
-            <div className="mt4 flex wrap g2">
+            <div className="step-actions mt4 flex wrap g2">
               {def.gate ? (
                 gate?.status === "pending" ? null : gate?.status === "returned" && !gate.addressedAt ? (
                   <div className="stack-sm" style={{ width: "100%" }}>

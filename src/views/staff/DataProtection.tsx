@@ -8,8 +8,9 @@
  * three compliance metrics in §11 (consent coverage, retention-overdue records,
  * third-party transfers logged).
  */
-import { useMemo, useState } from "react";
-import { Check, Download, Search, Lock, LockOpen, Trash2, Pencil, Plus, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { BP, useMediaQuery } from "@/lib/hooks";
+import { Check, Download, Search, SlidersHorizontal, Lock, LockOpen, Trash2, Pencil, Plus, X } from "lucide-react";
 import { useSession } from "@/App";
 import { store, uid, nowIso } from "@/lib/store";
 import {
@@ -19,8 +20,9 @@ import {
   type RegisterRow, type RetentionState,
 } from "@/lib/logic";
 import { DATA_CATEGORIES, LAWFUL_BASES, SAFEGUARDS } from "@/lib/spine";
-import { Empty, Kpi, Modal, Notice, Panel, Pill, SelectField, TabPanel, Tabs, TextArea, TextField, useToast, type Tone } from "@/lib/ui";
+import { EmptyState, FilterBar, Layer, Modal, Notice, PageHeader, Panel, Pill, SelectField, StatStrip, TabPanel, Tabs, TextArea, TextField, useToast, type Tone } from "@/lib/ui";
 import type { CaseRecord, StandingProcessor } from "@/lib/types";
+import { EVENTS, diffChanges } from "@/lib/audit";
 
 const STATE_TONE: Record<RetentionState, Tone> = {
   none: "neutral", scheduled: "neutral", due_soon: "warn", overdue: "bad", held: "info", disposed: "navy",
@@ -33,12 +35,14 @@ const TYPE_LABEL: Record<string, string> = {
 type TabId = "retention" | "register" | "processors";
 
 export function DataProtectionPage() {
-  const { snap, cases, can } = useSession();
+  const { snap, cases, can, route } = useSession();
   const config = snap.org.config;
   const policy = retentionPolicy(config);
   const mayRead = can("dataprotection.read");
   const list = useMemo(() => Object.values(cases), [cases]);
-  const [tab, setTab] = useState<TabId>("retention");
+  // Deep link: #/dataprotection/{retention|register|processors} opens that tab.
+  const [tab, setTab] = useState<TabId>(route.id === "register" || route.id === "processors" ? route.id : "retention");
+  useEffect(() => { if (route.id === "retention" || route.id === "register" || route.id === "processors") setTab(route.id); }, [route.id]);
 
   const consent = consentCoverage(list);
   const summary = retentionSummary(list, config);
@@ -47,19 +51,14 @@ export function DataProtectionPage() {
 
   return (
     <div className="stack">
-      <div className="page-head">
-        <div>
-          <h1>Data protection</h1>
-          <p>Retention schedule and the register of personal data leaving Sri Lanka. Aligned to PDPA No. 9 of 2022 as amended, Parts I and III, in force 1 January 2027.</p>
-        </div>
-      </div>
+      <PageHeader title="Data protection" context="Retention schedule and the register of personal data leaving Sri Lanka. Aligned to PDPA No. 9 of 2022 as amended, Parts I and III, in force 1 January 2027." />
 
-      <div className="grid grid-4 stagger">
-        <Kpi label="Consent coverage" value={`${consent.pct}%`} sub={`${consent.covered} of ${consent.total} profiled cases`} tone={consent.pct === 100 ? "ok" : consent.pct >= 90 ? "warn" : "bad"} />
-        <Kpi label="Retention overdue" value={summary.overdue} sub={summary.due_soon ? `${summary.due_soon} due within ${policy.warnDays} days` : "None due soon"} tone={summary.overdue ? "bad" : "ok"} onClick={() => setTab("retention")} />
-        <Kpi label="Transfers logged" value={transfers.length} sub={`${new Set(transfers.map((t) => t.country)).size} destination jurisdictions`} tone="neutral" onClick={() => setTab("register")} />
-        <Kpi label="Without a safeguard" value={unsafeguarded} sub="Transfers with no agreement recorded" tone={unsafeguarded ? "bad" : "ok"} onClick={() => setTab("register")} />
-      </div>
+      <StatStrip label="Data protection position" stats={[
+        { id: "consent", label: "Consent coverage", value: `${consent.pct}%`, sub: `${consent.covered} of ${consent.total} profiled cases`, tone: consent.pct === 100 ? "ok" : consent.pct >= 90 ? "warn" : "bad" },
+        { id: "retention", label: "Retention overdue", value: summary.overdue, sub: summary.due_soon ? `${summary.due_soon} due within ${policy.warnDays} days` : "None due soon", tone: summary.overdue ? "bad" : "ok", onClick: () => setTab("retention") },
+        { id: "transfers", label: "Transfers logged", value: transfers.length, sub: `${new Set(transfers.map((t) => t.country)).size} destination jurisdictions`, tone: "neutral", onClick: () => setTab("register") },
+        { id: "unsafe", label: "Without a safeguard", value: unsafeguarded, sub: "Transfers with no agreement recorded", tone: unsafeguarded ? "bad" : "ok", onClick: () => setTab("register") },
+      ]} />
 
       <Tabs<TabId>
         label="Data protection sections"
@@ -91,7 +90,7 @@ export function DataProtectionPage() {
 // ---------------------------------------------------------------------------
 
 function RetentionTab({ list }: { list: CaseRecord[] }) {
-  const { snap, can, user, log } = useSession();
+  const { snap, can, user, audit } = useSession();
   const toast = useToast();
   const config = snap.org.config;
   const policy = retentionPolicy(config);
@@ -114,7 +113,7 @@ function RetentionTab({ list }: { list: CaseRecord[] }) {
     if (!disposeTarget || !user) return;
     const ref = disposeTarget.ref;
     await store.mutateCase(disposeTarget.id, (c) => disposeCase(c, user, basis));
-    await log("Case record disposed", ref, basis);
+    await audit(EVENTS.disposed(disposeTarget, basis));
     setDisposeTarget(null); setTyped("");
     toast(`${ref} anonymised. Outcomes and dates kept for reporting.`);
   };
@@ -124,7 +123,7 @@ function RetentionTab({ list }: { list: CaseRecord[] }) {
     const ref = holdTarget.ref;
     const held = Boolean(holdTarget.legalHold);
     await store.mutateCase(holdTarget.id, (c) => (held ? clearLegalHold(c, user) : setLegalHold(c, user, reason)));
-    await log(held ? "Legal hold lifted" : "Legal hold placed", ref, held ? undefined : reason);
+    await audit(EVENTS.legalHold(holdTarget, !held, held ? undefined : reason));
     setHoldTarget(null); setReason("");
     toast(held ? `Legal hold lifted on ${ref}` : `Legal hold placed on ${ref}. Disposal is suspended.`);
   };
@@ -132,7 +131,7 @@ function RetentionTab({ list }: { list: CaseRecord[] }) {
   return (
     <div className="grid grid-3 stagger">
       <div className="span2 stack">
-        <div className="panel" style={{ padding: 12 }}>
+        <FilterBar label="Filter the retention schedule">
           <label htmlFor="ret-filter" className="sr-only">Filter by retention state</label>
           <select id="ret-filter" className="input" value={filter} onChange={(e) => setFilter(e.target.value as RetentionState | "actionable")}>
             <option value="actionable">Needs attention — overdue, due soon and legal holds</option>
@@ -143,12 +142,12 @@ function RetentionTab({ list }: { list: CaseRecord[] }) {
             <option value="disposed">Disposed</option>
             <option value="none">No clock — open cases</option>
           </select>
-        </div>
+        </FilterBar>
 
         {restricted.length > 0 && <Notice tone="info">You can review the schedule; {restricted.join(" and ")} {restricted.length === 1 && restricted[0] === "disposal" ? "is" : "are"} reserved to roles holding the matching data protection permission.</Notice>}
 
         {rows.length === 0 ? (
-          <Empty title="Nothing in this state" hint="Cases enter the schedule when they exit, complete, or go dormant on hold." />
+          <EmptyState glyph="check" title="Nothing in this state" reason="Cases enter the schedule when they exit, complete, or go dormant on hold." />
         ) : (
           <div className="panel table-wrap">
             <table className="tbl" style={{ minWidth: 760 }}>
@@ -277,8 +276,10 @@ function ScheduleRow({ label, months, note }: { label: string; months: number; n
 // Transfer register
 // ---------------------------------------------------------------------------
 
+const TRANSFER_FIELDS = [{ id: "lawfulBasis", label: "Lawful basis" }, { id: "safeguard", label: "Safeguard" }, { id: "country", label: "Country" }, { id: "note", label: "Note" }];
+
 function RegisterTab({ rows }: { rows: RegisterRow[] }) {
-  const { can, user, log, go } = useSession();
+  const { can, user, audit, go } = useSession();
   const toast = useToast();
   const [q, setQ] = useState("");
   const [type, setType] = useState("");
@@ -294,6 +295,25 @@ function RegisterTab({ rows }: { rows: RegisterRow[] }) {
     && (!q || [t.recipient, t.country, t.caseRef, t.lawfulBasis, t.safeguard].join(" ").toLowerCase().includes(q.toLowerCase()))
   );
 
+  const phone = useMediaQuery(BP.mobile);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersRef = useRef<HTMLButtonElement>(null);
+  const typeSelect = (
+    <div>
+      <label htmlFor="tr-type" className="sr-only">Recipient type</label>
+      <select id="tr-type" className="input" value={type} onChange={(e) => setType(e.target.value)}>
+        <option value="">All recipients</option>
+        {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+      </select>
+    </div>
+  );
+  const gapsCheck = (
+    <label className="check" htmlFor="tr-gaps">
+      <input id="tr-gaps" type="checkbox" checked={gapsOnly} onChange={(e) => setGapsOnly(e.target.checked)} />
+      <span>Gaps only</span>
+    </label>
+  );
+
   const openEdit = (t: RegisterRow) => {
     setForm({ lawfulBasis: t.lawfulBasis, safeguard: t.safeguard, country: t.country, note: t.note ?? "" });
     setEdit(t);
@@ -302,7 +322,7 @@ function RegisterTab({ rows }: { rows: RegisterRow[] }) {
   const save = async () => {
     if (!edit || !user) return;
     await store.mutateCase(edit.caseId, (c) => updateTransfer(c, edit.id, { ...form, note: form.note.trim() || undefined }, user));
-    await log("Transfer record updated", edit.caseRef, `${edit.recipient} — ${form.safeguard}`);
+    await audit(EVENTS.transferUpdated(edit, form.safeguard, diffChanges(edit as unknown as Record<string, unknown>, form as unknown as Record<string, unknown>, TRANSFER_FIELDS)));
     setEdit(null);
     toast("Transfer record updated");
   };
@@ -315,7 +335,7 @@ function RegisterTab({ rows }: { rows: RegisterRow[] }) {
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     a.download = `lpl-transfer-register-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
-    void log("Transfer register exported", undefined, `${list.length} records`);
+    void audit(EVENTS.registerExported(list.length));
   };
 
   const gaps = rows.filter((t) => t.safeguard === "None recorded").length;
@@ -334,32 +354,40 @@ function RegisterTab({ rows }: { rows: RegisterRow[] }) {
         </Notice>
       )}
 
-      <div className="panel" style={{ padding: 12 }}>
-        <div className="grid" style={{ gridTemplateColumns: "1fr 200px auto", gap: 10, alignItems: "center" }}>
-          <div className="input-wrap">
+      <FilterBar label="Filter the transfer register">
+        <div className="filters cols-register">
+          <div className="input-wrap f-search">
             <Search aria-hidden />
             <label htmlFor="tr-q" className="sr-only">Filter the register</label>
             <input id="tr-q" type="search" className="input" placeholder="Filter by recipient, country or case" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
-          <div>
-            <label htmlFor="tr-type" className="sr-only">Recipient type</label>
-            <select id="tr-type" className="input" value={type} onChange={(e) => setType(e.target.value)}>
-              <option value="">All recipients</option>
-              {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
-          </div>
-          <div className="flex g2 aic nowrap">
-            <label className="check" htmlFor="tr-gaps">
-              <input id="tr-gaps" type="checkbox" checked={gapsOnly} onChange={(e) => setGapsOnly(e.target.checked)} />
-              <span>Gaps only</span>
-            </label>
-            {mayExport && <button type="button" className="btn btn-secondary btn-sm" onClick={exportCsv} disabled={list.length === 0}><Download aria-hidden />Export</button>}
-          </div>
+          {phone ? (
+            <div className="flex g2 aic">
+              <button ref={filtersRef} type="button" className="btn btn-secondary btn-sm grow" aria-haspopup="dialog" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(true)}><SlidersHorizontal aria-hidden />Filters{type || gapsOnly ? ` (${(type ? 1 : 0) + (gapsOnly ? 1 : 0)})` : ""}</button>
+              {mayExport && <button type="button" className="btn btn-secondary btn-sm" onClick={exportCsv} disabled={list.length === 0}><Download aria-hidden />Export</button>}
+            </div>
+          ) : (
+            <>
+              {typeSelect}
+              <div className="flex g2 aic nowrap">
+                {gapsCheck}
+                {mayExport && <button type="button" className="btn btn-secondary btn-sm" onClick={exportCsv} disabled={list.length === 0}><Download aria-hidden />Export</button>}
+              </div>
+            </>
+          )}
         </div>
-      </div>
+      </FilterBar>
+      <Layer open={phone && filtersOpen} onClose={() => setFiltersOpen(false)} anchorRef={filtersRef} label="Filter the transfer register" variant="sheet">
+        <div className="stack-sm" style={{ padding: "4px 18px 22px" }}>
+          <h2 className="ui" style={{ fontSize: 15 }}>Filters</h2>
+          {typeSelect}
+          {gapsCheck}
+          <button type="button" className="btn btn-primary" onClick={() => setFiltersOpen(false)}>Show {list.length} record{list.length === 1 ? "" : "s"}</button>
+        </div>
+      </Layer>
 
       {list.length === 0 ? (
-        <Empty title="No transfers recorded" hint="Records are written automatically when applications are submitted (step 11), acceptance documents are shared (step 18) and a visa is lodged (step 23)." />
+        <EmptyState glyph="inbox" title="No transfers recorded" reason="Records are written automatically when applications are submitted (step 11), acceptance documents are shared (step 18) and a visa is lodged (step 23)." />
       ) : (
         <div className="panel table-wrap">
           <table className="tbl" style={{ minWidth: 1040 }}>
@@ -424,7 +452,7 @@ function RegisterTab({ rows }: { rows: RegisterRow[] }) {
 const EMPTY_PROCESSOR = { name: "", purpose: "", country: "", safeguard: SAFEGUARDS[0], agreementRef: "", dataCategories: [] as string[] };
 
 function ProcessorsTab() {
-  const { snap, can, log } = useSession();
+  const { snap, can, audit } = useSession();
   const toast = useToast();
   const processors = snap.org.config.processors ?? [];
   const mayEdit = can("dataprotection.write");
@@ -438,14 +466,14 @@ function ProcessorsTab() {
       agreementRef: f.agreementRef.trim() || undefined, addedAt: nowIso(),
     };
     await store.mutateOrg((o) => { o.config.processors = [...(o.config.processors ?? []), entry]; return o; });
-    await log("Standing processor added", entry.name, `${entry.country} — ${entry.safeguard}`);
+    await audit(EVENTS.processorAdded(entry));
     setOpen(false); setF(EMPTY_PROCESSOR);
     toast("Processor added to the register");
   };
 
   const remove = async (p: StandingProcessor) => {
     await store.mutateOrg((o) => { o.config.processors = (o.config.processors ?? []).filter((x) => x.id !== p.id); return o; });
-    await log("Standing processor removed", p.name);
+    await audit(EVENTS.processorRemoved(p.name));
     toast("Processor removed");
   };
 
@@ -463,7 +491,7 @@ function ProcessorsTab() {
       </div>
 
       {processors.length === 0 ? (
-        <Empty title="No processors recorded" hint="At minimum this should name wherever the workspace itself is hosted." action={mayEdit ? <button type="button" className="btn btn-primary btn-sm" onClick={() => setOpen(true)}>Add a processor</button> : undefined} />
+        <EmptyState glyph="inbox" title="No processors recorded" reason="At minimum this should name wherever the workspace itself is hosted." action={mayEdit ? <button type="button" className="btn btn-primary btn-sm" onClick={() => setOpen(true)}>Add a processor</button> : undefined} />
       ) : (
         <div className="panel table-wrap">
           <table className="tbl" style={{ minWidth: 820 }}>

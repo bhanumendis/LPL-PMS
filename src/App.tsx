@@ -8,12 +8,15 @@ import { Moon, Sun } from "lucide-react";
 import { store, type Snapshot } from "@/lib/store";
 import { can as canFn } from "@/lib/rbac";
 import { STEP_BY_N } from "@/lib/spine";
-import type { CaseRecord, Permission, Role, User } from "@/lib/types";
+import { EVENTS, type AuditEvent } from "@/lib/audit";
+import { runViewTransition } from "@/lib/motion";
+import type { CaseRecord, Permission, User } from "@/lib/types";
 import { ToastProvider, useToast } from "@/lib/ui";
 import { BRAND_LOGO, COPYRIGHT, ORG_SHORT, PRODUCT } from "@/lib/brand";
 import { AuthScreen } from "@/views/Auth";
-import { StaffShell } from "@/views/StaffShell";
-import { StudentShell } from "@/views/StudentShell";
+import { AppShell } from "@/shell/AppShell";
+import { ShellSkeleton } from "@/shell/ShellSkeleton";
+import { unsubscribeThisDevice } from "@/notifications/push";
 
 export interface Route { page: string; caseId?: string; step?: number; tab?: string; id?: string }
 
@@ -29,7 +32,8 @@ export interface SessionCtx {
   go: (r: Route) => void;
   signIn: (u: User) => void;
   signOut: () => void;
-  log: (action: string, target?: string, detail?: string) => Promise<void>;
+  /** Records a typed audit event as the signed-in user. */
+  audit: (event: AuditEvent) => Promise<void>;
   theme: "light" | "dark";
   toggleTheme: () => void;
 }
@@ -113,39 +117,49 @@ export default function App() {
 
   const user = userId ? snap.org.users[userId] ?? null : null;
   useEffect(() => { if (snap.loaded && userId && (!user || !user.active)) { setUserId(null); writeSession(null); } }, [snap.loaded, userId, user]);
+  useEffect(() => { store.setCurrentUser(user ? user.id : null); return () => store.setCurrentUser(null); }, [user]);
 
   const can = useCallback((p: Permission) => canFn(snap.org.config, user, p), [snap.org.config, user]);
   const isAdmin = !!user && user.active && user.role === "admin";
   const go = useCallback((r: Route) => {
     const h = toHash(r);
-    if (window.location.hash === h) setRoute(r); else window.location.hash = h;
+    if (r.page === "case") {
+      // Opening a case morphs into the workspace where the browser supports it. The route is set
+      // inside the transition and the URL pushed without a hashchange, so nothing renders twice.
+      runViewTransition(() => { setRoute(r); if (window.location.hash !== h) window.history.pushState(null, "", h); });
+    } else if (window.location.hash === h) setRoute(r); else window.location.hash = h;
     window.scrollTo({ top: 0, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }, []);
-  const signIn = useCallback((u: User) => { setUserId(u.id); writeSession(u.id); window.location.hash = "#/"; setRoute({ page: "home" }); }, []);
+  const signIn = useCallback((u: User) => { void store.audit(EVENTS.sessionSignIn(u), u).catch(() => undefined); setUserId(u.id); writeSession(u.id); window.location.hash = "#/"; setRoute({ page: "home" }); }, []);
   const signOut = useCallback(() => {
-    void store.server?.signOut();
+    // Revoke this device's push subscription (best effort, while the token is still valid), then end the session.
+    const uid = user?.id;
+    const who = user;
+    void (async () => {
+      if (who) await store.audit(EVENTS.sessionSignOut(who), who).catch(() => undefined);
+      try { const endpoint = await unsubscribeThisDevice(); if (endpoint && uid) await store.revokePushSubscription(endpoint, uid); } catch { /* best effort */ }
+      finally { void store.server?.signOut(); }
+    })();
     setUserId(null); writeSession(null); window.location.hash = "#/"; setRoute({ page: "home" });
-  }, []);
-  const log = useCallback(async (action: string, target?: string, detail?: string) => {
+  }, [user]);
+  const audit = useCallback(async (event: AuditEvent) => {
     if (!user) return;
-    await store.appendAudit({ actorId: user.id, actorName: user.name, actorRole: user.role as Role, action, target, detail });
+    await store.audit(event, user);
   }, [user]);
   const toggleTheme = useCallback(() => setTheme((t) => (t === "dark" ? "light" : "dark")), []);
 
-  const value = useMemo<SessionCtx>(() => ({ snap, user, users: snap.org.users, cases: snap.cases.cases, can, isAdmin, route, go, signIn, signOut, log, theme, toggleTheme }), [snap, user, can, isAdmin, route, go, signIn, signOut, log, theme, toggleTheme]);
+  const value = useMemo<SessionCtx>(() => ({ snap, user, users: snap.org.users, cases: snap.cases.cases, can, isAdmin, route, go, signIn, signOut, audit, theme, toggleTheme }), [snap, user, can, isAdmin, route, go, signIn, signOut, audit, theme, toggleTheme]);
 
   return (
     <ToastProvider>
       <StoreErrorToasts />
       <Ctx.Provider value={value}>
         {!snap.loaded ? (
-          <div className="loading" role="status" aria-live="polite"><div><div className="spinner" aria-hidden="true" />Opening the workspace…</div></div>
+          <ShellSkeleton />
         ) : !user ? (
           <AuthScreen />
-        ) : user.role === "student" ? (
-          <StudentShell />
         ) : (
-          <StaffShell />
+          <AppShell />
         )}
       </Ctx.Provider>
     </ToastProvider>
