@@ -27,7 +27,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # jsdom 30 needs ^22.22.2 || ^24.15.0 || >=26, undici 8 needs >=22.19.
+          # On Node 20 the test run dies in jsdom before collecting a single test.
+          node-version: 24
           cache: npm
       - run: npm ci
       # Runs the typecheck and the AAA contrast check before bundling; a failure stops the deploy.

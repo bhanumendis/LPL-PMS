@@ -5,6 +5,9 @@
   "type": "module",
   "author": "Bhanu Mendis",
   "license": "UNLICENSED",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.sw.json",
