@@ -1,0 +1,54 @@
+# Lyceum Placements — Placement Management System
+# Copyright (c) 2026 Bhanu Mendis. All rights reserved.
+#
+# Builds and tests lpl-api (server/) against a plain Postgres carrying supabase/schema.sql.
+name: Server (Go)
+
+on:
+  push:
+    paths: ["server/**", "supabase/**", ".github/workflows/server.yml"]
+  pull_request:
+    paths: ["server/**", "supabase/**", ".github/workflows/server.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+      TEST_JWT_SECRET: ci-only-secret-with-at-least-32-characters
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Resolve modules
+        run: go mod tidy
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Static analysis
+        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+      - name: Vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - name: Unit and integration tests
+        run: go test -race -count=1 ./...

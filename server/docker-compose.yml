@@ -1,0 +1,75 @@
+# Lyceum Placements — Placement Management System
+# Copyright (c) 2026 Bhanu Mendis. All rights reserved.
+#
+# Local stack that is faithful to production: Supabase's Postgres image (roles and the auth
+# schema included), GoTrue for identity, and lpl-api in front. Not yet exercised on a real
+# machine; treat the image tags and GoTrue settings as a starting point.
+#
+#   docker compose up -d db auth
+#   go run ./cmd/lpl-dbtool apply -f ../supabase/schema.sql -dsn "$DATABASE_URL"
+#   docker compose up -d api
+#
+# Keys: mint your own for local use, never reuse a project's.
+#   go run ./cmd/lpl-dbtool mint -secret "$JWT_SECRET" -role anon -sub ""            -> ANON_KEY
+#   go run ./cmd/lpl-dbtool mint -secret "$JWT_SECRET" -role service_role -sub ""    -> SERVICE_ROLE_KEY
+
+services:
+  db:
+    image: supabase/postgres:15.8.1.060
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: postgres
+    ports:
+      - "54322:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+
+  auth:
+    image: supabase/gotrue:v2.170.0
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: http://localhost:9999
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
+      GOTRUE_SITE_URL: http://localhost:5173
+      GOTRUE_JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (32+ characters)}
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+    ports:
+      - "9999:9999"
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      auth:
+        condition: service_started
+    environment:
+      LISTEN_ADDR: ":8080"
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres?sslmode=disable
+      DB_SYSTEM_ROLE: service_role
+      GOTRUE_URL: http://auth:9999
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (32+ characters)}
+      ANON_KEY: ${ANON_KEY:?mint with lpl-dbtool}
+      SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:?mint with lpl-dbtool}
+      CORS_ALLOW_ORIGIN: "*"
+    ports:
+      - "8080:8080"
+
+volumes:
+  dbdata:

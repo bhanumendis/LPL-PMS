@@ -1,0 +1,9 @@
+bin/
+*.exe
+*.test
+*.out
+.env
+.env.*
+!.env.example
+# Recorded golden traffic can contain personal data; keep it out of the repository.
+test/contract/testdata/*.ndjson
