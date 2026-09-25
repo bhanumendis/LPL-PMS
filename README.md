@@ -28,7 +28,7 @@ There is no sample or seed data anywhere in the build. A new workspace starts em
 | `src/lib/signals.ts` | Derived per-case signals (progress, stage, step, SLA flags, attention items, severity), computed once per snapshot |
 | `src/lib/rbac.ts` | The resource × action permission matrix, case visibility scope, locked cells |
 | `src/lib/store.ts` | Persistence. Picks an adapter: server → `window.storage` → `localStorage` → memory. Also the audit and notification APIs |
-| `src/lib/server.ts` | Supabase adapter — PostgREST for data, GoTrue for identity, RPCs for audit and notifications, Edge Function for account administration |
+| `src/lib/server.ts` | Server adapter for lpl-api — the PostgREST contract for data, GoTrue (proxied) for identity, RPCs for paged reads, audit and notifications, `admin-users` for account administration |
 | `src/lib/audit.ts` | Typed audit events (`EVENTS.*`) and the field-level diff helper |
 | `src/lib/motion.ts` | View transitions (rail row → case header) and FLIP for reordering lists |
 | `src/lib/ui/*`, `src/lib/charts.tsx` | Design-system primitives (surfaces, page header, stat strip, filter bar, layers and sheets, empty states, skeletons) and SVG charts |
@@ -42,9 +42,7 @@ There is no sample or seed data anywhere in the build. A new workspace starts em
 | `scripts/contrast.mjs` | Computes every token pair's contrast ratio from `tokens.css`; `npm run verify` stops on any pair below AAA |
 | `supabase/schema.sql` | Tables, helper functions, row-level security mirroring the permission matrix, closed-registration trigger, case write guard, v5 audit columns, notifications and push subscriptions |
 | `supabase/migrations/20260912_notifications_audit.sql` | The v5 additions for a project already provisioned from the v4 schema |
-| `supabase/functions/admin-users/` | Edge Function through which administrators create sign-ins and set temporary passwords |
-| `supabase/functions/push-dispatch/` | Edge Function that delivers pending notifications to Web Push subscriptions |
-| `server/` | **lpl-api** (Go): serves the same `/rest/v1`, `/auth/v1` and `/functions/v1/admin-users` contract in place of Supabase's request path, against the unchanged schema. See `server/README.md` |
+| `server/` | **lpl-api** (Go): serves `/rest/v1`, `/auth/v1` and `/functions/v1/admin-users` in place of Supabase's request path, and runs the background work (Web Push delivery, service-level reminders, the shared dashboard, notification retention) that Edge Functions and pg_cron did before v6. See `server/README.md` |
 | `.github/workflows/pages.yml` | Builds and publishes the test site to GitHub Pages on every push to `main` |
 | `.github/workflows/server.yml` | Builds and tests `server/` against a Postgres carrying `supabase/schema.sql` |
 | `LICENSE` | Ownership notice, all rights reserved |
@@ -66,9 +64,9 @@ Roles whose case scope is *assigned* get a rail on the **left edge that is alway
 
 ## Notifications
 
-Rows in `public.notifications` are written by the database, not the browser: `notify_case_change()` (trigger `cases_notify`) fans out assignment, gate, document and profile events to the right recipients, and `emit_sla_notifications()` raises due-soon and overdue clock notifications — schedule it (for example `select cron.schedule('lpl-sla', '*/15 * * * *', 'select public.emit_sla_notifications()')`). The client polls `notification_state()` with the workspace tick and pages with `notifications_page`; `mark_notifications_read` / `mark_all_notifications_read` are own-rows only. `prune_notifications(days)` trims history.
+Rows in `public.notifications` are written by the database, not the browser: `notify_case_change()` (trigger `cases_notify`) fans out assignment, gate, document and profile events to the right recipients, and lpl-api's reminder worker calls `emit_sla_notifications()` every 15 minutes (`SLA_REMINDER_INTERVAL`) to raise due-soon and overdue clock notifications, once per clock, state and due date. The client polls `notification_state()` with the workspace tick and pages with `notifications_page`; `mark_notifications_read` / `mark_all_notifications_read` are own-rows only. lpl-api prunes notifications older than `NOTIFICATION_RETENTION_DAYS` (90); `prune_notifications(days)` remains for a SUPER ADMIN to trim by hand.
 
-**Web Push** (hosted builds only; the single-file build cannot register a service worker): generate a VAPID key pair (`npx web-push generate-vapid-keys`), paste the public key in Settings → Notifications, deploy `push-dispatch` with secrets `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` and `DISPATCH_SECRET`, then invoke it from a Database Webhook on insert into `public.notifications` or from pg_cron every minute with the header `x-lpl-dispatch-secret`.
+**Web Push** (hosted builds only; the single-file build cannot register a service worker): generate a VAPID key pair (`npx web-push generate-vapid-keys`), give lpl-api `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (a secret) and `VAPID_SUBJECT` (a `mailto:` or `https:` contact), and paste the public key in Settings → Notifications. lpl-api delivers within about ten seconds of a notification being written, only to push services on its allow-list (`PUSH_ENDPOINT_HOSTS`), only to active accounts, and not at all once a notification is a day old.
 
 ## Audit
 
@@ -146,11 +144,11 @@ Row-level security, not application code. Every data-access policy in `supabase/
 There is no public sign-up. The sign-in form is the only authentication feature visible to the public.
 
 - **First run.** On an empty project the sign-in screen shows "Set up the administrator" once. That account is created through GoTrue sign-up and the database trigger makes it the Administrator because it is the first profile. This is the only sign-up the trigger ever accepts.
-- **Every other account** is created by an administrator: Staff → Create a profile (staff), or Cases → Create student (students). With the `account.write` permission the administrator issues a temporary password at the same time. The browser calls the `admin-users` Edge Function, which verifies the caller is an active Administrator and creates the identity with the service role key on the server. The service role key never reaches the browser.
-- **Anything else** — any public sign-up once the project has an administrator — is refused inside the database transaction by `handle_new_auth_user()`, so no orphan identity is created even if sign-ups are left enabled in the Supabase dashboard. A public sign-up never claims a profile, not even by matching email: only identities created by the Edge Function (stamped in `app_metadata`) are linked. Disable "Allow new users to sign up" in the dashboard after bootstrap for defence in depth.
-- **Passwords** must be at least 10 characters and mix three character classes; the rule is enforced in the browser and again in the Edge Function.
+- **Every other account** is created by an administrator: Staff → Create a profile (staff), or Cases → Create student (students). With the `account.write` permission the administrator issues a temporary password at the same time. The browser calls lpl-api's `admin-users` endpoint, which verifies the caller is an active Administrator and creates the identity with the service role key on the server. The service role key never reaches the browser.
+- **Anything else** — any public sign-up once the project has an administrator — is refused inside the database transaction by `handle_new_auth_user()`, so no orphan identity is created even if sign-ups are left enabled in the Supabase dashboard. A public sign-up never claims a profile, not even by matching email: only identities created through `admin-users` (stamped in `app_metadata`) are linked. Disable "Allow new users to sign up" in the dashboard after bootstrap for defence in depth.
+- **Passwords** must be at least 10 characters and mix three character classes; the rule is enforced in the browser and again by lpl-api.
 - **Password resets** are administrator actions (Staff → Set temporary password). There is deliberately no self-service reset on the public screen.
-- **Deactivation** removes the role from any live token (policies read `active`) and bans the identity through the Edge Function.
+- **Deactivation** removes the role from any live token (policies read `active`) and bans the identity through lpl-api.
 
 ## Connecting a server
 
@@ -158,9 +156,9 @@ Without a server the application stores everything in the browser, which is fine
 
 1. Create a Supabase project. **Choose the region closest to Colombo (Singapore, `ap-southeast-1`).**
 2. Run `supabase/schema.sql` in the project's SQL editor.
-3. Deploy the Edge Function: `supabase functions deploy admin-users` (the platform injects `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`; no other secret is needed).
+3. Deploy lpl-api (`server/`, see `server/README.md`) against the project's database and GoTrue. It holds the service role key; the browser never does.
 4. For the first administrator, either turn off email confirmation under Authentication → Providers for the set-up moment, or confirm the email from the inbox before signing in.
-5. In the application: Settings → Server connection → paste the project URL and the **anon** key → Test connection → Connect.
+5. In the application: Settings → Server connection → paste the **lpl-api** URL and the **anon** key → Test connection → Connect.
 6. Sign out, then complete "Set up the administrator" on the sign-in screen.
 7. Add the project to Data protection → Standing processors.
 
@@ -233,7 +231,7 @@ v5.0.0 (13 September 2026, branch `redesign/v5`): typecheck, eslint, 111 vitest 
 
 Still to be done by hand before real student data goes in:
 
-1. Exercise the Supabase path end to end on a real project (schema or migration, both Edge Functions, bootstrap, create profile with sign-in, complete a step, Team Leader decision, notification fan-out, `emit_sla_notifications` on a schedule, audit explorer paging, a push to a real device). The server code is consistent and unit-tested but has not yet run against a live project.
+1. Exercise the Supabase path end to end on a real project (schema or migration, lpl-api with its workers, bootstrap, create profile with sign-in, complete a step, Team Leader decision, notification fan-out, service-level reminders, audit explorer paging, a push to a real device). The server code is consistent and unit-tested but has not yet run against a live project.
 2. A screen-reader pass (NVDA or VoiceOver) through "complete a step", the student rail quick view and the student profile form.
 3. Windows forced-colours mode on a real machine.
 4. Workspace backups taken while connected to a server no longer include audit rows; export the audit log from the Audit log page instead.

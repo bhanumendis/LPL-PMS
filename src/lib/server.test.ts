@@ -57,6 +57,14 @@ describe("server adapter writes", () => {
     expect(calls[0]).toMatchObject({ url: "/rest/v1/audit", method: "POST", prefer: "return=minimal" });
   });
 
+  it("subscribes a device through save_push_subscription, never an upsert", async () => {
+    respond = () => new Response(null, { status: 204 });
+    await backend().savePushSubscription("u1", { endpoint: "https://fcm.googleapis.com/fcm/send/x", p256dh: "k", auth: "a", userAgent: "UA" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ url: "/rest/v1/rpc/save_push_subscription", method: "POST",
+      body: { p_endpoint: "https://fcm.googleapis.com/fcm/send/x", p_p256dh: "k", p_auth: "a", p_user_agent: "UA" } });
+  });
+
   it("patches only the profile columns that changed and inserts new profiles", async () => {
     const before: OrgState = { config: defaultConfig(), users: { u1: user("u1") } };
     const after: OrgState = { config: defaultConfig(), users: { u1: user("u1", { phone: "0771234567" }), u2: user("u2", { role: "student" }) } };

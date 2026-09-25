@@ -40,6 +40,8 @@ var Functions = map[string]Function{
 	"mark_notifications_read":     {Name: "mark_notifications_read", Params: []string{"p_ids"}, Types: []string{"text[]"}},
 	"mark_all_notifications_read": {Name: "mark_all_notifications_read"},
 	"prune_notifications":         {Name: "prune_notifications", Params: []string{"p_days"}, Types: []string{"integer"}},
+	// v6: a device subscribes (the endpoint moves to whoever subscribes it now)
+	"save_push_subscription": {Name: "save_push_subscription", Params: []string{"p_endpoint", "p_p256dh", "p_auth", "p_user_agent"}},
 	// v5: audit
 	"audit_page": {Name: "audit_page",
 		Params: []string{"p_before", "p_actor", "p_event_type", "p_entity_type", "p_entity_id", "p_from", "p_to", "p_q", "p_limit"},

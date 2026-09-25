@@ -33,8 +33,8 @@ function AttentionChips({ s }: { s?: CaseSignals }) {
   );
 }
 
-/** Shown beside an admin-users failure when the Edge Function is not on the project yet. */
-const NOT_DEPLOYED_HINT = "Deploy the admin-users function (supabase/functions/admin-users) to issue sign-ins from here.";
+/** Shown beside an admin-users failure when the workspace is not connected through lpl-api. */
+const NOT_DEPLOYED_HINT = "Sign-ins are issued by the API server (lpl-api). Connect this workspace to its address under Settings → Server connection, not to the database project directly.";
 
 export function CasesPage() {
   const { users, snap, user, can, go, route } = useSession();
@@ -231,7 +231,7 @@ export function AssignDialog({ c, onClose }: { c: AssignTarget; onClose: () => v
 
 /**
  * Opens a case for a student. With the account.write permission a sign-in can be issued in
- * the same step; on a server that goes through the admin-users Edge Function, and a failure
+ * the same step; on a server that goes through lpl-api's admin-users endpoint, and a failure
  * there leaves the case (and the student profile) in place so the sign-in can be issued later
  * from Staff.
  */

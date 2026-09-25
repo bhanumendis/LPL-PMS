@@ -13,7 +13,7 @@
  *      See supabase/schema.sql — the policies are the access control, not this code.
  *   3. Registration is closed. The only sign-up the database accepts is the first
  *      administrator on an empty project. Every other account is created by an
- *      administrator through the admin-users Edge Function (supabase/functions/admin-users).
+ *      administrator through lpl-api's admin-users endpoint (server/internal/httpapi/adminusers.go).
  */
 import type { AuditEntry, AuditState, CaseRecord, CasesState, OrgConfig, OrgState, PromptTemplate, PromptsState, User } from "./types";
 import type { AuditEventType, Change, EntityType } from "./audit";
@@ -189,7 +189,7 @@ class Client {
     return u.id;
   }
 
-  // ---- administrator-only account management (Edge Function, service role stays on the server) ----
+  // ---- administrator-only account management (lpl-api; the service role stays on the server) ----
 
   async adminUsers(action: "create" | "set_password" | "deactivate" | "reactivate", payload: Record<string, unknown>): Promise<AdminUserResult> {
     await this.ensureFresh();
@@ -197,10 +197,10 @@ class Client {
     try {
       res = await fetch(`${this.cfg.url}/functions/v1/admin-users`, { method: "POST", headers: this.headers(), body: JSON.stringify({ action, ...payload }) });
     } catch {
-      return { ok: false, error: "Could not reach the admin-users function. Check the project URL and that the function is deployed.", notDeployed: true };
+      return { ok: false, error: "Could not reach the server to issue the sign-in. Check the server address and try again.", notDeployed: true };
     }
     const body = await res.json().catch(() => ({})) as { auth_id?: string; error?: string };
-    if (res.status === 404) return { ok: false, error: "The admin-users Edge Function is not deployed on this project. Deploy supabase/functions/admin-users, then try again.", notDeployed: true };
+    if (res.status === 404) return { ok: false, error: "This server does not issue sign-ins.", notDeployed: true };
     if (!res.ok) return { ok: false, error: body.error || `The server refused the request (${res.status}).` };
     return { ok: true, authId: String(body.auth_id ?? "") };
   }
@@ -212,22 +212,6 @@ class Client {
     const res = await fetch(`${this.cfg.url}/rest/v1/${table}?select=*${query}`, { headers: this.headers(false) });
     if (!res.ok) throw new ServerError(await readableRestError(res), res.status);
     return await res.json() as T[];
-  }
-
-  /**
-   * Upsert. Postgres applies the INSERT and SELECT policies (and BEFORE INSERT triggers) to an
-   * upsert even when the row exists, so it is reserved for tables whose policies allow both
-   * for the caller — today only the caller's own push subscriptions.
-   */
-  async upsert(table: string, rows: unknown[], onConflict = "id"): Promise<void> {
-    if (!rows.length) return;
-    await this.ensureFresh();
-    const res = await fetch(`${this.cfg.url}/rest/v1/${table}?on_conflict=${onConflict}`, {
-      method: "POST",
-      headers: { ...this.headers(), Prefer: "return=minimal,resolution=merge-duplicates" },
-      body: JSON.stringify(rows),
-    });
-    if (!res.ok) throw new ServerError(await readableRestError(res), res.status);
   }
 
   /** A plain INSERT of new rows: only the insert policy applies. A duplicate id answers 409. */
@@ -247,7 +231,9 @@ class Client {
     await this.ensureFresh();
     const res = await fetch(`${this.cfg.url}/rest/v1/rpc/${fn}`, { method: "POST", headers: this.headers(), body: JSON.stringify(args) });
     if (!res.ok) throw new ServerError(await readableRestError(res), res.status);
-    return await res.json() as T;
+    // A function returning void answers 204 (PostgREST) or an empty JSON string (lpl-api).
+    const text = res.status === 204 ? "" : await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
   }
 
   /** A plain UPDATE of existing rows: only the update policy and the BEFORE UPDATE guards apply. */
@@ -704,9 +690,9 @@ export class SupabaseBackend {
   }
 
   // ---- push subscriptions (own rows under RLS) ----
-  async savePushSubscription(userId: string, sub: PushSubscriptionInput): Promise<void> {
-    const now = new Date().toISOString();
-    await this.client.upsert("push_subscriptions", [{ user_id: userId, endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth, user_agent: sub.userAgent, last_seen_at: now, revoked_at: null }], "endpoint");
+  /** The database files the device under the signed-in user, taking it over from whoever held it before (a shared computer). */
+  async savePushSubscription(_userId: string, sub: PushSubscriptionInput): Promise<void> {
+    await this.client.rpc("save_push_subscription", { p_endpoint: sub.endpoint, p_p256dh: sub.p256dh, p_auth: sub.auth, p_user_agent: sub.userAgent });
   }
   async revokePushSubscription(_userId: string, endpoint: string): Promise<void> {
     await this.client.patch("push_subscriptions", `endpoint=eq.${encodeURIComponent(endpoint)}`, { revoked_at: new Date().toISOString() });

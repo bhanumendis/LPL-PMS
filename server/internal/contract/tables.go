@@ -88,7 +88,7 @@ var Tables = map[string]Table{
 		{Name: "case_ref", Type: Text}, {Name: "step", Type: Integer}, {Name: "link", Type: Text}, {Name: "group_key", Type: Text},
 		{Name: "dedupe_key", Type: Text}, {Name: "read_at", Type: Timestamptz}, {Name: "pushed_at", Type: Timestamptz},
 		{Name: "push_attempts", Type: Integer},
-	}},
+	}, Internal: []string{"push_outcome", "push_claimed_until"}},
 	"push_subscriptions": {Name: "push_subscriptions", PrimaryKey: "id", Columns: []Column{
 		{Name: "id", Type: Text}, {Name: "user_id", Type: Text}, {Name: "endpoint", Type: Text}, {Name: "p256dh", Type: Text},
 		{Name: "auth", Type: Text}, {Name: "user_agent", Type: Text}, {Name: "created_at", Type: Timestamptz},

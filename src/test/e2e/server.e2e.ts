@@ -154,6 +154,19 @@ describe.skipIf(!API)("the client against lpl-api", () => {
     expect(row.studentName).toBe("Renamed Student");
   });
 
+  it("files a push subscription under whoever subscribes the device last", async () => {
+    const admin = await backendAs(SUPER_AUTH);
+    const c1 = await backendAs(C1_AUTH);
+    const device = { endpoint: "https://fcm.googleapis.com/fcm/send/e2e-shared-desk", p256dh: "B".padEnd(87, "A"), auth: "A".padEnd(22, "A"), userAgent: "e2e" };
+    await admin.savePushSubscription("ignored", device);
+    await c1.savePushSubscription("ignored", device);
+    expect((await c1.listPushSubscriptions("c1")).map((d) => d.endpoint)).toEqual([device.endpoint]);
+    const w = await admin.load();
+    const me = Object.values(w.org.users).find((u) => u.role === "super_admin")!;
+    expect(await admin.listPushSubscriptions(me.id)).toEqual([]);
+    await expect(c1.savePushSubscription("ignored", { ...device, endpoint: "http://fcm.googleapis.com/x" })).rejects.toMatchObject({ status: 400 });
+  });
+
   it("drives the store: open, change and re-read a case on a server", async () => {
     localStorage.setItem("lpl:pms:server", JSON.stringify({ url: API, anonKey: ANON }));
     localStorage.setItem("lpl:pms:server-session", JSON.stringify({ accessToken: await token(C1_AUTH), refreshToken: "r", expiresAt: Date.now() + 3_600_000 }));

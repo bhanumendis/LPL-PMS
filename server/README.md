@@ -1,6 +1,6 @@
 # lpl-api — the Placement Management System's backend, in Go
 
-Copyright (c) 2026 Bhanu Mendis. All rights reserved.
+Copyright © Bhanu Mendis - LGH IT
 
 `lpl-api` is one Go binary that serves the wire contract the single-file frontend already
 speaks (`src/lib/server.ts`) in place of Supabase's request path:
@@ -9,10 +9,11 @@ speaks (`src/lib/server.ts`) in place of Supabase's request path:
 |---|---|---|
 | `/rest/v1/{table}`, `/rest/v1/rpc/{fn}` | The PostgREST subset the frontend uses, executed under the caller's Postgres role and JWT claims so row-level security and the guard triggers in `supabase/schema.sql` keep deciding everything | PostgREST |
 | `/auth/v1/*` | Reverse proxy to GoTrue, unchanged | nothing (GoTrue stays) |
-| `/functions/v1/admin-users` | The account-administration function, same contract, status codes and messages | the Deno Edge Function |
+| `/functions/v1/admin-users` | The account-administration function, same contract, status codes and messages | the `admin-users` Edge Function |
+| background workers | Web Push delivery, service-level reminders, the shared dashboard, notification retention (`internal/workers`) | the `push-dispatch` Edge Function and pg_cron |
 
-Nothing about the database changes. Nothing about the frontend changes except one
-Content-Security-Policy line at build time (see Cutover).
+The Edge Functions' source was removed from the repository in v6 (it is in the git history
+before that commit); nothing calls them once the browser talks to lpl-api.
 
 **Status (12 September 2026):** builds with Go 1.27.1; `go vet`, `staticcheck` and
 `govulncheck` are clean; every unit suite passes. The integration suite and the golden
@@ -32,8 +33,10 @@ internal/contract  allow-list: tables, columns, RPCs, query grammar, Prefer
 internal/httpapi   router, middleware, handlers, PostgREST/GoTrue-shaped errors
 internal/gotrue    GoTrue admin API client
 internal/parity    golden record format and normaliser
+internal/webpush   Web Push: RFC 8291 encryption, RFC 8292 VAPID, the push-service request
+internal/workers   background jobs: push delivery, reminders, dashboard refresh, pruning
 test/sql           auth shim so schema.sql runs on a plain Postgres (tests only)
-test/integration   RLS, guard, attribution and admin-users tests against a real Postgres
+test/integration   RLS, guard, attribution, paging, admin-users and worker tests against a real Postgres
 test/contract      golden replay harness
 docs/              plan, ADR, parity and cutover notes
 ```
@@ -84,6 +87,24 @@ and `service_role` (the project's `postgres` and `authenticator` roles can).
 `docker-compose.yml` sketches a fully local stack (Supabase's Postgres image, GoTrue,
 lpl-api); it has not been exercised yet.
 
+## Background work
+
+Every replica runs the workers unless `WORKERS=false`; they coordinate through the database,
+so two replicas never deliver a notification twice.
+
+| Job | Every | What it does |
+|---|---|---|
+| push | `PUSH_INTERVAL` (10 s) | Claims undelivered notifications with a lease (`push_claim`, `FOR UPDATE SKIP LOCKED`), encrypts each for every active device of an active recipient and posts it to the push service; settles the outcome (`push_settle`). Transient failures back off (30 s, 2 min, 8 min, 32 min) and give up after five attempts; 404/410 revoke the subscription. A notification older than a day is not sent. Off without VAPID keys. |
+| reminders | `SLA_REMINDER_INTERVAL` (15 min) | `emit_sla_notifications()`: a reminder for every clock that is due soon or breached, once per clock, state and due date. One replica at a time (advisory lock). |
+| dashboard | `DASHBOARD_REFRESH_INTERVAL` (1 min) | `dashboard_refresh()`: recomputes the shared all-cases dashboard when cases or configuration changed or it is four minutes old, so no reader waits for it. |
+| retention | `PRUNE_INTERVAL` (6 h) | Deletes notifications older than `NOTIFICATION_RETENTION_DAYS` (90) in batches of 5,000, and subscriptions revoked more than 30 days ago. |
+
+The push dispatcher posts only to https endpoints on the push-service allow-list
+(`PUSH_ENDPOINT_HOSTS`, default FCM, Mozilla, Apple and WNS) and never follows a redirect:
+an endpoint is a URL a signed-in user supplied, and must not become a way to make the server
+call an address inside the network. The functions the workers call are executable by
+`service_role` only.
+
 ## Security model, in one paragraph
 
 Every `/rest/v1` request runs inside one transaction that executes `SET LOCAL ROLE
@@ -91,7 +112,7 @@ anon|authenticated` and installs `request.jwt.claims` (plus the `.claim.sub` and
 spellings) from the verified token, exactly as PostgREST does. `auth.uid()`, every RLS
 policy and every guard trigger therefore behave as they were audited. System work (the
 profile lookup and identity link inside admin-users) runs as `service_role` with no claims,
-which is what the Edge Function's service key did. A `service_role` token presented by a
+which is what the Edge Function's service key did, and so do the workers. A `service_role` token presented by a
 client is refused on this listener; the browser never sends one. The service role key is
 used only server-to-GoTrue.
 

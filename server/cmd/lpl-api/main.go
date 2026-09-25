@@ -4,7 +4,9 @@
 //
 // lpl-api serves the Placement Management System's backend contract in place of Supabase's
 // request path: /rest/v1 (data), /auth/v1 (proxied to GoTrue) and
-// /functions/v1/admin-users (account administration). One binary, one Postgres.
+// /functions/v1/admin-users (account administration). It also runs the background work
+// (internal/workers): Web Push delivery, service-level reminders, the shared dashboard and
+// notification retention. One binary, one Postgres.
 package main
 
 import (
@@ -22,6 +24,8 @@ import (
 	"lpl-api/internal/db"
 	"lpl-api/internal/gotrue"
 	"lpl-api/internal/httpapi"
+	"lpl-api/internal/webpush"
+	"lpl-api/internal/workers"
 )
 
 func main() {
@@ -56,6 +60,26 @@ func main() {
 
 	go srv.RunBackground(ctx)
 
+	workersDone := make(chan struct{})
+	if cfg.Workers {
+		var sender *webpush.Sender
+		if cfg.VAPIDPublicKey != "" {
+			v, err := webpush.ParseVAPID(cfg.VAPIDPublicKey, cfg.VAPIDPrivateKey, cfg.VAPIDSubject)
+			if err != nil { // config.Load has checked it; this cannot fail
+				logger.Error("vapid", "error", err.Error())
+				os.Exit(2)
+			}
+			sender = webpush.NewSender(v, cfg.PushHosts)
+		}
+		w := workers.New(pool, sender, logger, workers.Config{
+			PushInterval: cfg.PushInterval, SLAInterval: cfg.SLAInterval, DashboardInterval: cfg.DashboardInterval,
+			PruneInterval: cfg.PruneInterval, RetentionDays: cfg.NotificationRetentionDays,
+		})
+		go func() { w.Run(ctx); close(workersDone) }()
+	} else {
+		close(workersDone)
+	}
+
 	hs := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           srv.Handler(),
@@ -73,10 +97,18 @@ func main() {
 		_ = hs.Shutdown(shutdownCtx)
 	}()
 
-	logger.Info("lpl-api listening", "addr", cfg.ListenAddr, "env", cfg.Env, "gotrue", cfg.GoTrueURL, "simple_protocol", cfg.DBSimpleProtocol, "cors_origins", cfg.CORSAllowOrigins)
+	logger.Info("lpl-api listening", "addr", cfg.ListenAddr, "env", cfg.Env, "gotrue", cfg.GoTrueURL, "simple_protocol", cfg.DBSimpleProtocol,
+		"cors_origins", cfg.CORSAllowOrigins, "workers", cfg.Workers, "push", cfg.Workers && cfg.VAPIDPublicKey != "")
 	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("listen", "error", err.Error())
 		os.Exit(1)
+	}
+	// Let the workers finish the tick they are in (a push batch records its outcomes) before
+	// the pool closes under them.
+	select {
+	case <-workersDone:
+	case <-time.After(30 * time.Second):
+		logger.Warn("workers did not stop within 30s")
 	}
 	logger.Info("lpl-api stopped")
 }

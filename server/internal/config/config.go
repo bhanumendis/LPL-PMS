@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"lpl-api/internal/webpush"
 )
 
 // Config is the complete runtime configuration of lpl-api.
@@ -67,6 +69,24 @@ type Config struct {
 	RateAPIPerMinute   int
 	// HSTS adds Strict-Transport-Security (default on in production).
 	HSTS bool
+
+	// Background work (internal/workers). Workers switches every job off (WORKERS=false),
+	// for a replica that should only serve requests; each interval set to 0 switches one off.
+	Workers           bool
+	PushInterval      time.Duration
+	SLAInterval       time.Duration
+	DashboardInterval time.Duration
+	PruneInterval     time.Duration
+	// NotificationRetentionDays is how long notifications are kept (default 90, at least 7).
+	NotificationRetentionDays int
+	// VAPID key pair and contact for Web Push (all three, or none: push delivery off).
+	// VAPIDPrivateKey is a secret; the public key is also entered in Settings.
+	VAPIDPublicKey  string
+	VAPIDPrivateKey string
+	VAPIDSubject    string
+	// PushHosts are the push services the dispatcher may contact (PUSH_ENDPOINT_HOSTS,
+	// comma-separated; default webpush.DefaultHosts).
+	PushHosts []string
 }
 
 // Production reports whether the service runs with production safeguards.
@@ -180,6 +200,37 @@ func FromEnv(get func(string) string) (Config, error) {
 		errs = append(errs, fmt.Errorf("APP_ENV must be production or development, got %q", c.Env))
 	}
 	c.HSTS = boolv("HSTS", c.Production())
+
+	c.Workers = boolv("WORKERS", true)
+	c.PushInterval = durv("PUSH_INTERVAL", 10*time.Second)
+	c.SLAInterval = durv("SLA_REMINDER_INTERVAL", 15*time.Minute)
+	c.DashboardInterval = durv("DASHBOARD_REFRESH_INTERVAL", time.Minute)
+	c.PruneInterval = durv("PRUNE_INTERVAL", 6*time.Hour)
+	c.NotificationRetentionDays = int(intv("NOTIFICATION_RETENTION_DAYS", 90))
+	if c.NotificationRetentionDays < 7 {
+		errs = append(errs, fmt.Errorf("NOTIFICATION_RETENTION_DAYS must be at least 7, got %d", c.NotificationRetentionDays))
+	}
+	for name, d := range map[string]time.Duration{"PUSH_INTERVAL": c.PushInterval, "SLA_REMINDER_INTERVAL": c.SLAInterval, "DASHBOARD_REFRESH_INTERVAL": c.DashboardInterval, "PRUNE_INTERVAL": c.PruneInterval} {
+		if d > 0 && d < time.Second {
+			errs = append(errs, fmt.Errorf("%s must be 0 (off) or at least 1s, got %s", name, d))
+		}
+	}
+	c.VAPIDPublicKey = str("VAPID_PUBLIC_KEY", "")
+	c.VAPIDPrivateKey = strings.TrimSpace(get("VAPID_PRIVATE_KEY"))
+	c.VAPIDSubject = str("VAPID_SUBJECT", "")
+	if c.VAPIDPublicKey != "" || c.VAPIDPrivateKey != "" || c.VAPIDSubject != "" {
+		if _, err := webpush.ParseVAPID(c.VAPIDPublicKey, c.VAPIDPrivateKey, c.VAPIDSubject); err != nil {
+			errs = append(errs, fmt.Errorf("VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY and VAPID_SUBJECT must be set together for Web Push: %w", err))
+		}
+	}
+	for _, h := range strings.Split(str("PUSH_ENDPOINT_HOSTS", ""), ",") {
+		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
+			if strings.ContainsAny(h, "/:@ ") || !strings.Contains(h, ".") {
+				errs = append(errs, fmt.Errorf("PUSH_ENDPOINT_HOSTS entry %q is not a host name such as fcm.googleapis.com", h))
+			}
+			c.PushHosts = append(c.PushHosts, h)
+		}
+	}
 	if len(c.CORSAllowOrigins) == 0 {
 		if c.Production() {
 			errs = append(errs, errors.New("CORS_ALLOW_ORIGINS is required in production: the origin(s) the web application is served from"))

@@ -229,7 +229,7 @@ export interface OrgConfig {
   channels: string[];
   branches: string[];
   caseCounter: number;
-  /** Web Push: the public half of the VAPID pair used by the push-dispatch function. */
+  /** Web Push: the public half of lpl-api's VAPID pair (VAPID_PUBLIC_KEY); browsers subscribe with it. */
   push?: { vapidPublicKey?: string };
   /** Browser-storage workspaces only: the role model the stored matrix was written for. */
   rbacVersion?: number;

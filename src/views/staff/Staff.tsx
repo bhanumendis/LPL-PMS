@@ -17,8 +17,8 @@ import type { Role, User } from "@/lib/types";
 import { EVENTS } from "@/lib/audit";
 import { ChangeRoleDialog } from "./ChangeRole";
 
-/** Shown beside an admin-users failure when the Edge Function is not on the project yet. */
-const NOT_DEPLOYED_HINT = "Deploy the admin-users function (supabase/functions/admin-users) to issue sign-ins from here.";
+/** Shown beside an admin-users failure when the workspace is not connected through lpl-api. */
+const NOT_DEPLOYED_HINT = "Sign-ins are issued by the API server (lpl-api). Connect this workspace to its address under Settings → Server connection, not to the database project directly.";
 
 export function StaffPage() {
   const { users, user, audit, snap, can, go } = useSession();
@@ -162,7 +162,7 @@ export function StaffPage() {
 
 /**
  * Creates a staff profile and, with the account.write permission, issues its sign-in in the
- * same step. On a server the sign-in goes through the admin-users Edge Function; if that
+ * same step. On a server the sign-in goes through lpl-api's admin-users endpoint; if that
  * fails the profile is kept and the sign-in can be issued later from this page.
  */
 function CreateProfile({ onClose }: { onClose: () => void }) {
@@ -257,7 +257,7 @@ function CreateProfile({ onClose }: { onClose: () => void }) {
 
 /**
  * Sets a temporary password. Browser storage writes the hash to the profile; a server goes
- * through the admin-users Edge Function. A profile that has no sign-in yet (the function
+ * through lpl-api's admin-users endpoint. A profile that has no sign-in yet (the endpoint
  * answers 409) is offered "Create sign-in" instead, which issues one with the same password.
  */
 function SetTemporaryPassword({ u, onClose }: { u: User; onClose: () => void }) {

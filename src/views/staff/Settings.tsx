@@ -239,7 +239,7 @@ function ServerPanel() {
         ) : (
           <>
             <p className="muted">Without a server, records are held in this browser only. Connect a Supabase project to share one set of records across staff, with the visibility rules enforced by the database rather than by this page.</p>
-            <Notice tone="warn">Run <b className="ui">supabase/schema.sql</b> against the project, then deploy the <b className="ui">admin-users</b> Edge Function (supabase/functions/admin-users). The schema creates the tables, the row-level security policies that mirror the permission matrix, and the closed-registration trigger; the function is how administrators issue sign-ins.</Notice>
+            <Notice tone="warn">Run <b className="ui">supabase/schema.sql</b> against the project's database and connect to the <b className="ui">lpl-api</b> server in front of it (server/). The schema creates the tables, the row-level security policies that mirror the permission matrix, and the closed-registration trigger; lpl-api issues sign-ins and delivers reminders and push notifications.</Notice>
             <TextField label="Project URL" value={f.url} onChange={(v) => { setF({ ...f, url: v }); setState("idle"); }} placeholder="https://xxxxxxxx.supabase.co" />
             <TextField label="Anon (public) key" value={f.anonKey} onChange={(v) => { setF({ ...f, anonKey: v }); setState("idle"); }} hint="The publishable key from Project Settings → API. Never the service_role key." />
             {msg && <Notice tone={state === "ok" ? "ok" : "bad"} role="status">{msg}</Notice>}

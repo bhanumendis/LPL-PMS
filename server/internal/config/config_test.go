@@ -4,6 +4,9 @@
 package config
 
 import (
+	"crypto/ecdh"
+	"crypto/rand"
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -104,5 +107,80 @@ func TestProductionRefusesLooseCORS(t *testing.T) {
 	c, err := FromEnv(env(m))
 	if err != nil || c.CORSAllowOrigins[0] != "*" || c.HSTS {
 		t.Fatalf("development default: %+v %v", c, err)
+	}
+}
+
+func baseEnv(extra map[string]string) func(string) string {
+	m := map[string]string{
+		"DATABASE_URL": "postgres://u:p@localhost:5432/x", "GOTRUE_URL": "http://localhost:9999",
+		"ANON_KEY": "a", "SERVICE_ROLE_KEY": "s", "JWT_SECRET": "x", "CORS_ALLOW_ORIGINS": "https://pms.lyceum.lk",
+	}
+	for k, v := range extra {
+		m[k] = v
+	}
+	return env(m)
+}
+
+// vapidPair makes a throwaway key pair in the form web-push generate-vapid-keys prints.
+func vapidPair(t *testing.T) (string, string) {
+	t.Helper()
+	k, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(k.PublicKey().Bytes()), base64.RawURLEncoding.EncodeToString(k.Bytes())
+}
+
+func TestWorkerDefaultsAndPushOffWithoutKeys(t *testing.T) {
+	c, err := FromEnv(baseEnv(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Workers || c.PushInterval != 10*time.Second || c.SLAInterval != 15*time.Minute || c.DashboardInterval != time.Minute ||
+		c.PruneInterval != 6*time.Hour || c.NotificationRetentionDays != 90 || c.VAPIDPublicKey != "" || len(c.PushHosts) != 0 {
+		t.Fatalf("worker defaults: %+v", c)
+	}
+	c, err = FromEnv(baseEnv(map[string]string{"WORKERS": "false", "SLA_REMINDER_INTERVAL": "0", "PUSH_ENDPOINT_HOSTS": "fcm.googleapis.com, Push.Apple.com"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Workers || c.SLAInterval != 0 || strings.Join(c.PushHosts, ",") != "fcm.googleapis.com,push.apple.com" {
+		t.Fatalf("got %+v", c)
+	}
+}
+
+func TestVAPIDIsAllOrNothingAndChecked(t *testing.T) {
+	pub, priv := vapidPair(t)
+	other, _ := vapidPair(t)
+	ok := map[string]string{"VAPID_PUBLIC_KEY": pub, "VAPID_PRIVATE_KEY": priv, "VAPID_SUBJECT": "mailto:it@lyceum.lk"}
+	if _, err := FromEnv(baseEnv(ok)); err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]map[string]string{
+		"no private key":   {"VAPID_PRIVATE_KEY": ""},
+		"no subject":       {"VAPID_SUBJECT": ""},
+		"wrong public key": {"VAPID_PUBLIC_KEY": other},
+		"garbage private":  {"VAPID_PRIVATE_KEY": "not-a-key"},
+	} {
+		m := map[string]string{}
+		for k, v := range ok {
+			m[k] = v
+		}
+		for k, v := range change {
+			m[k] = v
+		}
+		if _, err := FromEnv(baseEnv(m)); err == nil || !strings.Contains(err.Error(), "VAPID") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for _, bad := range []map[string]string{
+		{"NOTIFICATION_RETENTION_DAYS": "3"},
+		{"PUSH_INTERVAL": "10ms"},
+		{"PUSH_ENDPOINT_HOSTS": "https://fcm.googleapis.com"},
+		{"PUSH_ENDPOINT_HOSTS": "localhost"},
+	} {
+		if _, err := FromEnv(baseEnv(bad)); err == nil {
+			t.Errorf("%v accepted", bad)
+		}
 	}
 }

@@ -159,7 +159,7 @@ func reset(t *testing.T) {
 	t.Helper()
 	system(t, func(ctx context.Context, ex db.Executor) error {
 		for _, stmt := range []string{
-			"truncate public.case_transfers, public.case_gates, public.dashboard_cache, public.cases, public.audit, public.prompts, public.org_config, public.app_users, public.notifications",
+			"truncate public.case_transfers, public.case_gates, public.dashboard_cache, public.cases, public.audit, public.prompts, public.org_config, public.app_users, public.notifications, public.push_subscriptions",
 			"delete from auth.users",
 			"select setval('public.case_ref_seq', 1, false)",
 			// A fresh database carries the organisation row (v6 write path).
@@ -418,8 +418,9 @@ func TestPermissionMatrixMatchesTypeScriptDefaults(t *testing.T) {
 			}
 		}
 	}
-	// Anonymous callers hold nothing (functions are executable by PUBLIC; the answer is false).
-	if r := rpc(t, "app_can", "", `{"perm":"case.view"}`); r.Status != 200 || r.Body != "false" {
+	// Anonymous callers hold nothing: since v6.4 they may not even ask (the row-level security
+	// helpers are executable by signed-in roles only).
+	if r := rpc(t, "app_can", "", `{"perm":"case.view"}`); r.Status != http.StatusUnauthorized || !strings.Contains(r.Body, "42501") {
 		t.Fatalf("anon app_can: %d %s", r.Status, r.Body)
 	}
 }
