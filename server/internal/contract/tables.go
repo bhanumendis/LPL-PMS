@@ -90,6 +90,10 @@ var Tables = map[string]Table{
 	"permission_defaults": {Name: "permission_defaults", PrimaryKey: "perm", Columns: []Column{
 		{Name: "perm", Type: Text}, {Name: "roles", Type: TextArray},
 	}},
+	// v6: read-only for every application role (writes are revoked); Group IT maintains it with SQL.
+	"group_it_domains": {Name: "group_it_domains", PrimaryKey: "domain", Columns: []Column{
+		{Name: "domain", Type: Text}, {Name: "note", Type: Text}, {Name: "added_at", Type: Timestamptz},
+	}},
 }
 
 // Error is a refusal in PostgREST's envelope: {code, details, hint, message} with an HTTP status.

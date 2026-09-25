@@ -9,7 +9,7 @@
  * real records.
  */
 import type { AuditState, CasesState, OrgConfig, OrgState, PromptsState, RetentionPolicy } from "./types";
-import { DEFAULT_CASE_SCOPE, DEFAULT_PERMISSIONS, normalizeCaseScope, normalizePermissions } from "./rbac";
+import { DEFAULT_CASE_SCOPE, DEFAULT_PERMISSIONS, RBAC_VERSION, normalizeCaseScope, normalizePermissions } from "./rbac";
 import { CHANNELS } from "./spine";
 
 /**
@@ -35,6 +35,7 @@ export function defaultConfig(): OrgConfig {
     channels: [...CHANNELS],
     branches: ["Colombo"],
     caseCounter: 0,
+    rbacVersion: RBAC_VERSION,
     rev: 0,
   };
 }

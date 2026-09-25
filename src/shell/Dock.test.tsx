@@ -14,7 +14,7 @@ import type { Badges } from "@/lib/signals";
 
 const config = defaultConfig();
 const admin = user({ id: "a", role: "admin" });
-const { primary, more } = destinationsFor({ role: "admin", can: (p) => canFn(config, admin, p), isAdmin: true, seesAll: caseScopeOf(config, "admin") === "all" });
+const { primary, more } = destinationsFor({ role: "admin", can: (p) => canFn(config, admin, p), isSuperAdmin: true, seesAll: caseScopeOf(config, "admin") === "all" });
 const badges: Badges = { unassigned: 3, toReview: 0, pendingGates: 2, breaches: 0, returned: 0, retentionOverdue: 0 };
 
 describe("Dock", () => {

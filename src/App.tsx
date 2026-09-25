@@ -26,8 +26,8 @@ export interface SessionCtx {
   users: Record<string, User>;
   cases: Record<string, CaseRecord>;
   can: (p: Permission) => boolean;
-  /** True only for the Administrator role. Used for features that no configuration can open to other roles. */
-  isAdmin: boolean;
+  /** True only for SUPER ADMIN (Group IT). Used for features no configuration can open to other roles. */
+  isSuperAdmin: boolean;
   route: Route;
   go: (r: Route) => void;
   signIn: (u: User) => void;
@@ -120,7 +120,7 @@ export default function App() {
   useEffect(() => { store.setCurrentUser(user ? user.id : null); return () => store.setCurrentUser(null); }, [user]);
 
   const can = useCallback((p: Permission) => canFn(snap.org.config, user, p), [snap.org.config, user]);
-  const isAdmin = !!user && user.active && user.role === "admin";
+  const isSuperAdmin = !!user && user.active && user.role === "super_admin";
   const go = useCallback((r: Route) => {
     const h = toHash(r);
     if (r.page === "case") {
@@ -148,7 +148,7 @@ export default function App() {
   }, [user]);
   const toggleTheme = useCallback(() => setTheme((t) => (t === "dark" ? "light" : "dark")), []);
 
-  const value = useMemo<SessionCtx>(() => ({ snap, user, users: snap.org.users, cases: snap.cases.cases, can, isAdmin, route, go, signIn, signOut, audit, theme, toggleTheme }), [snap, user, can, isAdmin, route, go, signIn, signOut, audit, theme, toggleTheme]);
+  const value = useMemo<SessionCtx>(() => ({ snap, user, users: snap.org.users, cases: snap.cases.cases, can, isSuperAdmin, route, go, signIn, signOut, audit, theme, toggleTheme }), [snap, user, can, isSuperAdmin, route, go, signIn, signOut, audit, theme, toggleTheme]);
 
   return (
     <ToastProvider>

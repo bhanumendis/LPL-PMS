@@ -47,7 +47,7 @@ describe("typed audit events", () => {
       EVENTS.disposed(c, "basis"), EVENTS.legalHold(c, true, "r"), EVENTS.transferUpdated({ id: "t1", caseRef: c.ref, recipient: "Uni" }, "SCC"), EVENTS.registerExported(3), EVENTS.processorAdded({ name: "Host", country: "SG", safeguard: "DPA" }), EVENTS.processorRemoved("Host"),
       EVENTS.promptCreated({ id: "p1", title: "T" }), EVENTS.promptDuplicated({ id: "p2", title: "T2" }, "p1"), EVENTS.promptDeleted({ id: "p1", title: "T" }), EVENTS.promptSaved({ id: "p1", title: "T" }, 2), EVENTS.promptsExported([{ title: "T" }]), EVENTS.promptsImported("f.json", 2),
       EVENTS.sessionSignIn(u), EVENTS.sessionSignOut(u), EVENTS.signInFailed(u.email, "Invalid credentials"),
-      EVENTS.overviewExported(), EVENTS.staffExported(), EVENTS.auditExported({ eventType: "gate" }, 4), EVENTS.notificationsRead(3),
+      EVENTS.roleAssigned({ id: "u", name: "U", email: "u@x" }, "Counsellor", "Team Leader"), EVENTS.overviewExported(), EVENTS.staffExported(), EVENTS.auditExported({ eventType: "gate" }, 4), EVENTS.notificationsRead(3),
     ];
     expect(all).toHaveLength(Object.keys(EVENTS).length);
     for (const e of all) {

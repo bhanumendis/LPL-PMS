@@ -23,7 +23,7 @@ function newId(): string {
 
 export function rolesHolding(config: OrgConfig, perm: Permission): Role[] {
   const roles = config.permissions?.[perm] ?? DEFAULT_PERMISSIONS[perm] ?? [];
-  return Array.from(new Set<Role>([...roles, "admin"]));
+  return Array.from(new Set<Role>([...roles, "super_admin"]));
 }
 
 export function recipientsHolding(users: Record<string, User>, config: OrgConfig, perm: Permission): string[] {

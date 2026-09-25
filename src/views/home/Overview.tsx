@@ -12,8 +12,8 @@ import { TeamLeaderHome } from "./TeamLeaderHome";
 import { CounsellorHome } from "./CounsellorHome";
 
 export function Overview() {
-  const { isAdmin, can } = useSession();
-  if (isAdmin) return <AdminHome />;
+  const { user, can } = useSession();
+  if (user?.role === "super_admin" || user?.role === "admin") return <AdminHome />;
   if (can("analytics.view")) return <TeamLeaderHome />;
   return <CounsellorHome />;
 }

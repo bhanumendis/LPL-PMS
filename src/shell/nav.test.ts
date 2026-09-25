@@ -13,7 +13,7 @@ import type { Permission, Role } from "@/lib/types";
 function input(role: Role): NavInput {
   const config = defaultConfig();
   const u = user({ id: role, role });
-  return { role, can: (p) => canFn(config, u, p), isAdmin: role === "admin", seesAll: caseScopeOf(config, role) === "all" };
+  return { role, can: (p) => canFn(config, u, p), isSuperAdmin: role === "super_admin", seesAll: caseScopeOf(config, role) === "all" };
 }
 
 describe("destinationsFor", () => {
@@ -32,19 +32,25 @@ describe("destinationsFor", () => {
     expect(primary.find((d) => d.id === "governance")?.children?.map((c) => c.page)).toEqual(["dataprotection", "audit"]);
     expect(more).toEqual([]);
   });
-  it("administrator: six primary destinations plus settings and prompts under more", () => {
-    const { primary, more } = destinationsFor(input("admin"));
+  it("super admin: six primary destinations plus settings and prompts under more", () => {
+    const { primary, more } = destinationsFor(input("super_admin"));
     expect(primary).toHaveLength(6);
     expect(more.map((m) => m.page)).toEqual(["settings", "prompts"]);
     expect(moreDestination(more)?.children?.map((c) => c.page)).toEqual(["settings", "prompts"]);
     expect(primary[0].shortcut).toBe("Alt+1");
+  });
+  it("admin (Placement Team): the same operational destinations, settings but never the Prompt Engineer", () => {
+    const { primary, more } = destinationsFor(input("admin"));
+    expect(primary.map((d) => d.id)).toEqual(["home", "cases", "approvals", "escalations", "people", "governance"]);
+    expect(primary.find((d) => d.id === "people")?.children?.map((c) => c.page)).toEqual(["staff", "roles"]);
+    expect(more.map((m) => m.page)).toEqual(["settings"]);
   });
   it("student: four destinations", () => {
     const { primary } = destinationsFor(input("student"));
     expect(primary.map((d) => d.label)).toEqual(["My placement", "Profile", "Documents", "Journey"]);
   });
   it("activeDestination maps case, roles and audit onto their groups", () => {
-    const { primary } = destinationsFor(input("admin"));
+    const { primary } = destinationsFor(input("super_admin"));
     expect(activeDestination("case", primary)).toBe("cases");
     expect(activeDestination("roles", primary)).toBe("people");
     expect(activeDestination("audit", primary)).toBe("governance");
@@ -64,13 +70,13 @@ describe("destinationsFor", () => {
  * permissions and the Audit log behind the command palette because grouped children were
  * never rendered; this is the invariant that would have caught it.
  */
-const PAGE_GATE: Record<string, Permission | "admin"> = {
+const PAGE_GATE: Record<string, Permission | "super"> = {
   cases: "case.view", approvals: "gate.view", escalations: "escalation.view", staff: "staff.read", roles: "role.view",
-  dataprotection: "dataprotection.view", audit: "audit.view", settings: "settings.view", prompts: "admin",
+  dataprotection: "dataprotection.view", audit: "audit.view", settings: "settings.view", prompts: "super",
 };
 
 describe("every permitted page is reachable", () => {
-  for (const role of ["admin", "team_leader", "counsellor"] as Role[]) {
+  for (const role of ["super_admin", "admin", "team_leader", "counsellor"] as Role[]) {
     it(role, () => {
       const i = input(role);
       const { primary, more } = destinationsFor(i);
@@ -80,7 +86,7 @@ describe("every permitted page is reachable", () => {
         ...more.map((m) => m.page),
       ]);
       for (const [page, gate] of Object.entries(PAGE_GATE)) {
-        const allowed = gate === "admin" ? i.isAdmin : i.can(gate);
+        const allowed = gate === "super" ? i.isSuperAdmin : i.can(gate);
         if (allowed) expect(reachable, `${role} may open ${page}`).toContain(page);
       }
     });

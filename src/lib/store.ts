@@ -22,11 +22,15 @@ import type { PushDevice, PushSubscriptionInput } from "@/notifications/push";
 import type { AuditEvent, AuditEventType, EntityType } from "./audit";
 import { sessionId } from "./hooks";
 import { BROWSER_STORAGE_ALLOWED } from "./runtime";
+import { migrateRbac } from "./rbac";
 
 /** Filters for one page of the audit log. `before` is the `at` of the last row already shown. */
 export interface AuditQuery { before?: string | null; actorId?: string; eventType?: AuditEventType; entityType?: EntityType; entityId?: string; from?: string; to?: string; q?: string; limit?: number }
 
 export const AUDIT_WINDOW_DAYS = 30;
+
+/** Development/browser-storage stand-in for public.group_it_domains. */
+export const DEV_GROUP_IT_DOMAINS: readonly string[] = ["lyceum.lk"];
 
 /** The browser-storage form of audit_page: same filters, same default window, same ordering. */
 export function filterAudit(entries: AuditEntry[], q: AuditQuery, now = Date.now()): AuditEntry[] {
@@ -110,9 +114,16 @@ function parse<T>(raw: string | null, fallback: T): T {
   try { return { ...fallback, ...(JSON.parse(raw) as T) }; } catch { return fallback; }
 }
 
-/** Stored organisation state is brought up to the current configuration shape on every load. */
+/**
+ * Stored organisation state is brought up to the current configuration shape on every load.
+ * A browser-storage workspace from before v6 is moved to the SUPER ADMIN / ADMIN model the
+ * same way the database migration moves a server.
+ */
 function normalizeOrg(o: OrgState): OrgState {
-  return { config: normalizeConfig(o.config), users: o.users && typeof o.users === "object" ? o.users : {} };
+  const users = o.users && typeof o.users === "object" ? o.users : {};
+  const config = { ...(o.config ?? {}) } as OrgState["config"];
+  migrateRbac(config, users);
+  return { config: normalizeConfig(config), users };
 }
 
 // ---------- browser key-value adapters ----------
@@ -659,6 +670,17 @@ class Store {
       await this.backend.clear();
       this.update({ ...defaultWorkspace(), syncedAt: Date.now() });
     });
+  }
+
+  /**
+   * Group IT domains for SUPER ADMIN. The database holds and enforces the list; this is only
+   * so the interface can explain a refusal before it happens. Browser storage (development)
+   * uses the production default.
+   */
+  async groupItDomains(): Promise<string[]> {
+    const server = this.server;
+    if (!server) return [...DEV_GROUP_IT_DOMAINS];
+    try { return await server.groupItDomains(); } catch { return []; }
   }
 
   findUserByEmail(email: string): User | undefined {

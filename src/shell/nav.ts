@@ -31,7 +31,8 @@ export interface Destination {
 export interface NavInput {
   role: Role;
   can: (p: Permission) => boolean;
-  isAdmin: boolean;
+  /** SUPER ADMIN (Group IT): the Prompt Engineer Workspace. */
+  isSuperAdmin: boolean;
   /** Case scope is "all" (Team Leader, Administrator). */
   seesAll: boolean;
   /** Case scope is "none": the cases destination is hidden. */
@@ -76,8 +77,8 @@ export function destinationsFor(i: NavInput): { primary: Destination[]; more: De
   if (gov.length) primary.push({ id: "governance", label: "Governance", icon: Landmark, page: gov[0].page, pages: gov.map((p) => p.page), children: gov.length > 1 ? gov : undefined, badge: (b) => (i.can("dataprotection.view") ? b.retentionOverdue || undefined : undefined) });
 
   const more: Destination[] = [];
-  if (i.can("settings.view")) more.push({ id: "more", label: "Settings", icon: MoreHorizontal, page: "settings", pages: ["settings"] });
-  if (i.isAdmin) more.push({ id: "more", label: "Prompt Engineer", icon: MoreHorizontal, page: "prompts", pages: ["prompts"] });
+  if (i.can("settings.view") || i.can("system.view")) more.push({ id: "more", label: "Settings", icon: MoreHorizontal, page: "settings", pages: ["settings"] });
+  if (i.isSuperAdmin) more.push({ id: "more", label: "Prompt Engineer", icon: MoreHorizontal, page: "prompts", pages: ["prompts"] });
 
   return { primary: withShortcuts(primary), more };
 }

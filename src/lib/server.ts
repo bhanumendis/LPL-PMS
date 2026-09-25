@@ -516,6 +516,18 @@ export class SupabaseBackend {
     return rows[0] ? toUser(rows[0]) : null;
   }
 
+  /** Email domains whose accounts may hold SUPER ADMIN (read-only for every application role). */
+  async groupItDomains(): Promise<string[]> {
+    const rows = await this.client.select<{ domain: string }>("group_it_domains", "&order=domain.asc");
+    return rows.map((r) => r.domain);
+  }
+
+  /** Before the first account exists: the domains the first (SUPER ADMIN) account may use. */
+  async bootstrapDomains(): Promise<string[]> {
+    const d = await this.client.rpc<string[] | null>("bootstrap_domains");
+    return Array.isArray(d) ? d : [];
+  }
+
   /** Reference numbers come from a database sequence so that two staff cannot issue the same one. */
   async nextCaseRef(prefix: string): Promise<string> {
     return await this.client.rpc<string>("next_case_ref", { prefix });

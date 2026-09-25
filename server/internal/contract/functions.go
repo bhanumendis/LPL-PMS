@@ -45,6 +45,10 @@ var Functions = map[string]Function{
 		Params: []string{"p_before", "p_actor", "p_event_type", "p_entity_type", "p_entity_id", "p_from", "p_to", "p_q", "p_limit"},
 		Types:  []string{"timestamptz", "text", "text", "text", "text", "timestamptz", "timestamptz", "text", "integer"}, Set: true},
 	"audit_detail": {Name: "audit_detail", Params: []string{"p_id"}, Set: true},
+	// v6: role model
+	"bootstrap_domains":  {Name: "bootstrap_domains"},
+	"can_manage_account": {Name: "can_manage_account", Params: []string{"p_target"}},
+	"is_group_it_email":  {Name: "is_group_it_email", Params: []string{"p_email"}},
 	// v6: case saves with revision check and an explicit "nothing was saved"
 	"save_case": {Name: "save_case", Params: []string{"p_id", "p_rev", "p_data"}, Types: []string{"text", "integer", "jsonb"}},
 }

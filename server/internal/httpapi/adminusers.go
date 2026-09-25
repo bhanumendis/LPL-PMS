@@ -12,9 +12,11 @@
 //	{ action: "reactivate",   app_user_id }             -> { auth_id }
 //
 // The caller must hold account.write (create, set_password) or account.delete (deactivate,
-// reactivate) under public.app_can(), evaluated with the caller's own token. The profile
-// row must already exist; its email is the sign-in email. Identity work is done through
-// GoTrue's admin API with the service role key, which never leaves this process.
+// reactivate) under public.app_can(), evaluated with the caller's own token, and — when the
+// target is an administrator account (SUPER ADMIN or ADMIN) — must be a SUPER ADMIN
+// (public.can_manage_account). The profile row must already exist; its email is the sign-in
+// email. Identity work is done through GoTrue's admin API with the service role key, which
+// never leaves this process. Database errors are logged under the request id, never returned.
 package httpapi
 
 import (
@@ -91,16 +93,20 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request) {
 	if action == "deactivate" || action == "reactivate" {
 		needed = "account.delete"
 	}
-	allowed := false
+	allowed, manage := false, false
 	if p, perr := s.resolver.Resolve(r.Context(), authorization); perr == nil && p.Role == "authenticated" {
 		if err := s.runner.WithUser(r.Context(), p, func(ctx context.Context, ex db.Executor) error {
-			return ex.QueryRow(ctx, "select public.app_can($1::text)", needed).Scan(&allowed)
+			return ex.QueryRow(ctx, "select public.app_can($1::text), public.can_manage_account($2::text)", needed, appUserID).Scan(&allowed, &manage)
 		}); err != nil {
 			allowed = false
 		}
 	}
 	if !allowed {
 		fnError(w, http.StatusForbidden, fmt.Sprintf("This action requires the %s permission.", needed))
+		return
+	}
+	if !manage {
+		fnError(w, http.StatusForbidden, "Only a SUPER ADMIN may manage administrator accounts.")
 		return
 	}
 
@@ -122,7 +128,8 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		fnError(w, http.StatusInternalServerError, dbMessage(err))
+		s.log.Error("admin-users profile lookup", "request_id", RequestID(r.Context()), "error", dbMessage(err))
+		fnError(w, http.StatusInternalServerError, "The account service could not complete the request.")
 		return
 	}
 	if !found {
@@ -160,7 +167,8 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request) {
 			return err
 		})
 		if lerr != nil {
-			fnError(w, http.StatusInternalServerError, "Identity created but not linked: "+dbMessage(lerr))
+			s.log.Error("admin-users link", "request_id", RequestID(r.Context()), "auth_id", authID, "error", dbMessage(lerr))
+			fnError(w, http.StatusInternalServerError, "The sign-in was created but could not be linked to the profile. Ask Group IT to check the server log.")
 			return
 		}
 		writeFn(w, http.StatusOK, map[string]string{"auth_id": authID})

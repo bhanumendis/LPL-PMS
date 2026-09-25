@@ -16,23 +16,27 @@ import { BROWSER_STORAGE_ALLOWED } from "@/lib/runtime";
 
 /** The editable settings as form strings; also the "before" side of the audit diff. */
 function settingsForm(cfg: OrgConfig, ret: ReturnType<typeof retentionPolicy>) {
-  return { orgName: cfg.orgName, entityCode: cfg.entityCode, cisDays: String(cfg.sla.cisDays), offerReminderDays: String(cfg.sla.offerReminderDays), followUpMonths: String(cfg.sla.followUpMonths), exitedMonths: String(ret.exitedMonths), completedMonths: String(ret.completedMonths), dormantMonths: String(ret.dormantMonths), warnDays: String(ret.warnDays), channels: cfg.channels.join("\n"), branches: cfg.branches.join("\n"), vapidPublicKey: cfg.push?.vapidPublicKey ?? "" };
+  return { orgName: cfg.orgName, entityCode: cfg.entityCode, cisDays: String(cfg.sla.cisDays), offerReminderDays: String(cfg.sla.offerReminderDays), followUpMonths: String(cfg.sla.followUpMonths), exitedMonths: String(ret.exitedMonths), completedMonths: String(ret.completedMonths), dormantMonths: String(ret.dormantMonths), warnDays: String(ret.warnDays), channels: cfg.channels.join("\n"), branches: cfg.branches.join("\n") };
 }
 
 const SETTINGS_FIELDS = [
   { id: "orgName", label: "Organisation name" }, { id: "entityCode", label: "Case reference prefix" },
   { id: "cisDays", label: "Course Information Sheet days" }, { id: "offerReminderDays", label: "Offer reminder days" }, { id: "followUpMonths", label: "Follow-up months" },
   { id: "exitedMonths", label: "Retention after exit (months)" }, { id: "completedMonths", label: "Retention after completion (months)" }, { id: "dormantMonths", label: "Dormant hold (months)" }, { id: "warnDays", label: "Retention warning days" },
-  { id: "channels", label: "Enquiry channels" }, { id: "branches", label: "Branches" }, { id: "vapidPublicKey", label: "VAPID public key" },
+  { id: "channels", label: "Enquiry channels" }, { id: "branches", label: "Branches" },
 ];
 
 export function SettingsPage() {
-  const { snap, user, audit, signOut, can, isAdmin } = useSession();
+  const { snap, user, audit, signOut, can } = useSession();
   const toast = useToast();
   const cfg = snap.org.config;
   const ret = retentionPolicy(cfg);
+  const mayRead = can("settings.read");
   const mayWrite = can("settings.write");
-  const mayReset = can("settings.delete");
+  const system = can("system.view");
+  const mayWriteSystem = can("system.write");
+  const mayReset = can("system.delete");
+  const [vapid, setVapid] = useState(cfg.push?.vapidPublicKey ?? "");
   const [f, setF] = useState(() => settingsForm(cfg, ret));
   const [confirm, setConfirm] = useState<"reset" | null>(null);
   const [typed, setTyped] = useState("");
@@ -52,23 +56,30 @@ export function SettingsPage() {
       };
       o.config.channels = f.channels.split("\n").map((s) => s.trim()).filter(Boolean);
       o.config.branches = f.branches.split("\n").map((s) => s.trim()).filter(Boolean);
-      const vapid = f.vapidPublicKey.trim();
-      o.config.push = vapid ? { ...(o.config.push ?? {}), vapidPublicKey: vapid } : undefined;
       return o;
     });
     await audit(EVENTS.settingsUpdated(diffChanges(settingsForm(cfg, ret), f, SETTINGS_FIELDS)));
     toast("Settings saved");
   };
+  /** Integration keys are system configuration: a separate save under system.write. */
+  const saveIntegration = async () => {
+    if (!mayWriteSystem) return;
+    const before = cfg.push?.vapidPublicKey ?? "";
+    const next = vapid.trim();
+    await store.mutateOrg((o) => { o.config.push = next ? { ...(o.config.push ?? {}), vapidPublicKey: next } : undefined; return o; });
+    await audit(EVENTS.settingsUpdated(diffChanges({ vapidPublicKey: before }, { vapidPublicKey: next }, [{ id: "vapidPublicKey", label: "VAPID public key" }])));
+    toast("Integration settings saved");
+  };
   const reset = async () => { if (!mayReset || !user || snap.backend === "server") return; await store.resetAll(); await store.audit(EVENTS.workspaceReset(), user); setConfirm(null); signOut(); };
   const backup = () => {
-    if (!isAdmin || snap.backend === "server") return;
+    if (!mayWriteSystem || snap.backend === "server") return;
     const data = { exportedAt: new Date().toISOString(), org: snap.org, cases: snap.cases, audit: snap.audit, prompts: snap.prompts };
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })); a.download = `lpl-pms-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click();
     void audit(EVENTS.backupExported());
     toast("Backup downloaded");
   };
   const restore = async (file: File) => {
-    if (!isAdmin || snap.backend === "server") return;
+    if (!mayWriteSystem || snap.backend === "server") return;
     try {
       const data = JSON.parse(await file.text()) as { org?: OrgState; cases?: CasesState; audit?: AuditState; prompts?: PromptsState };
       if (!data.org?.config || !data.cases?.cases) throw new Error("not a backup");
@@ -82,10 +93,10 @@ export function SettingsPage() {
     <div className="stack">
       <PageHeader
         title="Settings"
-        context={<>Organisation, service levels and reference lists.</>}
-        actions={<><button type="button" className="btn btn-primary" onClick={save} disabled={!mayWrite}><Save aria-hidden />Save settings</button></>}
+        context={<>Organisation, service levels and reference lists{system ? "; system configuration below" : ""}.</>}
+        actions={mayWrite ? <button type="button" className="btn btn-primary" onClick={save}><Save aria-hidden />Save settings</button> : undefined}
       />
-      <div className="grid grid-2 stagger">
+      {mayRead && <div className="grid grid-2 stagger">
         <Panel title="Organisation">
           <div className="stack-sm">
             <TextField label="Organisation name" value={f.orgName} onChange={(v) => setF({ ...f, orgName: v })} />
@@ -112,10 +123,15 @@ export function SettingsPage() {
         <Panel title="Enquiry channels">
           <TextArea label="Channels offered at enquiry" value={f.channels} onChange={(v) => setF({ ...f, channels: v })} rows={7} hint="One per line. The seven checklist channels are the standard set." />
         </Panel>
-        <Panel title="Notifications">
+      </div>}
+      {system && <>
+      <h2 className="mt2">System configuration</h2>
+      <p className="small muted">Reserved for Super Admin (Group IT).</p>
+      <div className="grid grid-2 stagger">
+        <Panel title="Notifications" action={mayWriteSystem ? <button type="button" className="btn btn-secondary btn-sm" onClick={saveIntegration}><Save aria-hidden />Save</button> : undefined}>
           <div className="stack-sm">
-            <p className="xs muted">Browser push notifications are delivered by the push-dispatch function on the server. Generate a VAPID key pair once (for example <code>npx web-push generate-vapid-keys</code>), put the private key and a dispatch secret in the function's secrets, and paste the public key here. Nothing secret is stored in the workspace.</p>
-            <TextField label="VAPID public key" value={f.vapidPublicKey} onChange={(v) => setF({ ...f, vapidPublicKey: v })} hint="Leave empty to keep push switched off; the bell and in-app notifications work regardless." autoComplete="off" />
+            <p className="xs muted">Browser push notifications are delivered by the API server. Generate a VAPID key pair once (for example <code>npx web-push generate-vapid-keys</code>), put the private key in the server's secrets, and paste the public key here. Nothing secret is stored in the workspace.</p>
+            <TextField label="VAPID public key" value={vapid} onChange={setVapid} hint="Leave empty to keep push switched off; the bell and in-app notifications work regardless." autoComplete="off" />
           </div>
         </Panel>
         {BROWSER_STORAGE_ALLOWED && <ServerPanel />}
@@ -126,7 +142,7 @@ export function SettingsPage() {
             {snap.backend === "server" && (
               <p className="muted">Backups of a server are taken by the database platform (daily backups and point-in-time recovery) and restored by Group IT; see docs/OPERATIONS.md. Individual records can be exported from each case.</p>
             )}
-            {isAdmin && snap.backend !== "server" && (
+            {mayWriteSystem && snap.backend !== "server" && (
               <div className="flex wrap g2 mt2">
                 <button type="button" className="btn btn-secondary btn-sm" onClick={backup}><Download aria-hidden />Download backup</button>
                 <button type="button" className="btn btn-secondary btn-sm" onClick={() => fileRef.current?.click()}><Upload aria-hidden />Restore backup</button>
@@ -142,6 +158,7 @@ export function SettingsPage() {
           </div>
         </Panel>
       </div>
+      </>}
       <Modal open={confirm === "reset"} onClose={() => setConfirm(null)} title="Reset the workspace" width={460}>
         <p className="small ink2">Type <b className="ui">RESET</b> to confirm. This cannot be undone — download a backup first if you may need the records.</p>
         <div className="mt3"><TextField label="Confirmation" value={typed} onChange={setTyped} autoComplete="off" /></div>

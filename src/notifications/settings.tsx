@@ -16,7 +16,7 @@ import { Notice, Pill, useToast } from "@/lib/ui";
 import { currentEndpoint, deviceLabel, permissionState, pushSupport, subscribeThisDevice, unsubscribeThisDevice, type PushDevice } from "./push";
 
 export function NotificationSettings() {
-  const { snap, isAdmin } = useSession();
+  const { snap, can } = useSession();
   const toast = useToast();
   const key = snap.org.config.push?.vapidPublicKey;
   const support = pushSupport(key);
@@ -66,7 +66,7 @@ export function NotificationSettings() {
         <p className="ui strong flex aic g2"><BellRing aria-hidden style={{ width: 16, height: 16, color: "var(--accent-text)" }} />Push notifications on this device</p>
         {support === "unsupported" && <p className="small muted mt1">This browser does not support push notifications. The bell and in-app notifications still work.</p>}
         {support === "insecure" && <p className="small muted mt1">Push notifications need the hosted (HTTPS) version of the application. They are not available when the file is opened directly.</p>}
-        {support === "no-key" && <p className="small muted mt1">Push has not been set up for this workspace yet.{isAdmin ? " Add the VAPID public key under Settings → Notifications." : " Ask an administrator."}</p>}
+        {support === "no-key" && <p className="small muted mt1">Push has not been set up for this workspace yet.{can("system.write") ? " Add the VAPID public key under Settings → System configuration." : " Ask Group IT."}</p>}
         {support === "ready" && perm === "denied" && <Notice tone="warn">Notifications are blocked for this site. Allow them in the browser's site settings, then try again.</Notice>}
         {support === "ready" && perm !== "denied" && !thisDeviceOn && (
           <>

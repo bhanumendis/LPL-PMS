@@ -6,6 +6,7 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -64,12 +65,12 @@ func TestAdminUsersPermission(t *testing.T) {
 		t.Fatalf("forged: %d %s", rec.Code, rec.Body.String())
 	}
 	// app_can says no.
-	e.ex.rows = []fakeRow{{vals: []any{false}}}
+	e.ex.rows = []fakeRow{{vals: []any{false, true}}}
 	rec = e.do(http.MethodPost, fnPath, "student-token", `{"action":"create","app_user_id":"u1"}`, nil)
 	if rec.Code != 403 {
 		t.Fatalf("denied: %d %s", rec.Code, rec.Body.String())
 	}
-	if e.ex.calls[0].SQL != "select public.app_can($1::text)" || e.ex.calls[0].Args[0] != "account.write" {
+	if e.ex.calls[0].SQL != "select public.app_can($1::text), public.can_manage_account($2::text)" || e.ex.calls[0].Args[0] != "account.write" || e.ex.calls[0].Args[1] != "u1" {
 		t.Fatalf("permission query %+v", e.ex.calls[0])
 	}
 	if e.runner.users[0].Sub != studentSub {
@@ -77,9 +78,22 @@ func TestAdminUsersPermission(t *testing.T) {
 	}
 }
 
+// Holding account.write is not enough to touch an administrator's sign-in.
+func TestAdminUsersPrivilegedTargetNeedsSuperAdmin(t *testing.T) {
+	e := newEnv(t)
+	e.ex.rows = []fakeRow{{vals: []any{true, false}}}
+	rec := e.do(http.MethodPost, fnPath, "admin-token", `{"action":"set_password","app_user_id":"root","password":"Password123!"}`, nil)
+	if rec.Code != 403 || decode(t, rec.Body.String())["error"] != "Only a SUPER ADMIN may manage administrator accounts." {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	if len(e.gotrue.passwords) != 0 || e.runner.system != 0 {
+		t.Fatal("no identity work may happen for a refused target")
+	}
+}
+
 func TestAdminUsersProfileLookup(t *testing.T) {
 	e := newEnv(t)
-	e.ex.rows = []fakeRow{{vals: []any{true}}, {err: pgx.ErrNoRows}}
+	e.ex.rows = []fakeRow{{vals: []any{true, true}}, {err: pgx.ErrNoRows}}
 	rec := e.do(http.MethodPost, fnPath, "admin-token", `{"action":"create","app_user_id":"u9","password":"Password123!"}`, nil)
 	if rec.Code != 404 || decode(t, rec.Body.String())["error"] != "No profile with that id. Create the profile first." {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
@@ -87,28 +101,28 @@ func TestAdminUsersProfileLookup(t *testing.T) {
 	if e.runner.system != 1 {
 		t.Fatalf("profile lookup must run as the system caller: %d", e.runner.system)
 	}
-	e.ex.rows = []fakeRow{{vals: []any{true}}, {err: pgErr("XX000", "boom")}}
+	e.ex.rows = []fakeRow{{vals: []any{true, true}}, {err: pgErr("XX000", "boom")}}
 	rec = e.do(http.MethodPost, fnPath, "admin-token", `{"action":"create","app_user_id":"u9","password":"Password123!"}`, nil)
-	if rec.Code != 500 || decode(t, rec.Body.String())["error"] != "boom" {
+	if rec.Code != 500 || strings.Contains(rec.Body.String(), "boom") {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 }
 
 func TestAdminUsersCreate(t *testing.T) {
 	e := newEnv(t)
-	e.ex.rows = []fakeRow{{vals: []any{true}}, profileRow("existing")}
+	e.ex.rows = []fakeRow{{vals: []any{true, true}}, profileRow("existing")}
 	rec := e.do(http.MethodPost, fnPath, "admin-token", `{"action":"create","app_user_id":"u1","password":"Password123!"}`, nil)
 	if rec.Code != 409 || decode(t, rec.Body.String())["error"] != "This profile already has a sign-in." {
 		t.Fatalf("already: %d %s", rec.Code, rec.Body.String())
 	}
 
-	e.ex.rows = []fakeRow{{vals: []any{true}}, profileRow(nil)}
+	e.ex.rows = []fakeRow{{vals: []any{true, true}}, profileRow(nil)}
 	rec = e.do(http.MethodPost, fnPath, "admin-token", `{"action":"create","app_user_id":"u1","password":"short"}`, nil)
 	if rec.Code != 400 || decode(t, rec.Body.String())["error"] != "Use at least 10 characters." {
 		t.Fatalf("weak: %d %s", rec.Code, rec.Body.String())
 	}
 
-	e.ex.rows = []fakeRow{{vals: []any{true}}, profileRow(nil)}
+	e.ex.rows = []fakeRow{{vals: []any{true, true}}, profileRow(nil)}
 	e.ex.calls = nil
 	rec = e.do(http.MethodPost, fnPath, "admin-token", `{"action":"create","app_user_id":"u1","password":"Password123!","email":"ignored","name":"ignored"}`, nil)
 	if rec.Code != 200 || decode(t, rec.Body.String())["auth_id"] != e.gotrue.createID {
@@ -126,7 +140,7 @@ func TestAdminUsersCreate(t *testing.T) {
 		t.Fatalf("link %+v", link)
 	}
 
-	e.ex.rows = []fakeRow{{vals: []any{true}}, profileRow(nil)}
+	e.ex.rows = []fakeRow{{vals: []any{true, true}}, profileRow(nil)}
 	e.gotrue.err = &gotrue.Error{Status: 422, Message: "User already registered"}
 	rec = e.do(http.MethodPost, fnPath, "admin-token", `{"action":"create","app_user_id":"u1","password":"Password123!"}`, nil)
 	if rec.Code != 400 || decode(t, rec.Body.String())["error"] != "User already registered" {
@@ -134,27 +148,27 @@ func TestAdminUsersCreate(t *testing.T) {
 	}
 	e.gotrue.err = nil
 
-	e.ex.rows = []fakeRow{{vals: []any{true}}, profileRow(nil)}
+	e.ex.rows = []fakeRow{{vals: []any{true, true}}, profileRow(nil)}
 	e.ex.execErr = pgErr("23503", "insert or update on table \"app_users\" violates foreign key constraint")
 	rec = e.do(http.MethodPost, fnPath, "admin-token", `{"action":"create","app_user_id":"u1","password":"Password123!"}`, nil)
-	if rec.Code != 500 || decode(t, rec.Body.String())["error"] != "Identity created but not linked: insert or update on table \"app_users\" violates foreign key constraint" {
+	if rec.Code != 500 || strings.Contains(rec.Body.String(), "foreign key") || !strings.Contains(rec.Body.String(), "could not be linked") {
 		t.Fatalf("link error: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
 func TestAdminUsersSetPassword(t *testing.T) {
 	e := newEnv(t)
-	e.ex.rows = []fakeRow{{vals: []any{true}}, profileRow(nil)}
+	e.ex.rows = []fakeRow{{vals: []any{true, true}}, profileRow(nil)}
 	rec := e.do(http.MethodPost, fnPath, "admin-token", `{"action":"set_password","app_user_id":"u1","password":"Password123!"}`, nil)
 	if rec.Code != 409 || decode(t, rec.Body.String())["error"] != "This profile has no sign-in yet." {
 		t.Fatalf("no sign-in: %d %s", rec.Code, rec.Body.String())
 	}
-	e.ex.rows = []fakeRow{{vals: []any{true}}, profileRow("auth-1")}
+	e.ex.rows = []fakeRow{{vals: []any{true, true}}, profileRow("auth-1")}
 	rec = e.do(http.MethodPost, fnPath, "admin-token", `{"action":"set_password","app_user_id":"u1","password":"nosymbols"}`, nil)
 	if rec.Code != 400 {
 		t.Fatalf("weak: %d %s", rec.Code, rec.Body.String())
 	}
-	e.ex.rows = []fakeRow{{vals: []any{true}}, profileRow("auth-1")}
+	e.ex.rows = []fakeRow{{vals: []any{true, true}}, profileRow("auth-1")}
 	rec = e.do(http.MethodPost, fnPath, "admin-token", `{"action":"set_password","app_user_id":"u1","password":"Password123!"}`, nil)
 	if rec.Code != 200 || decode(t, rec.Body.String())["auth_id"] != "auth-1" || e.gotrue.passwords["auth-1"] != "Password123!" {
 		t.Fatalf("set: %d %s %v", rec.Code, rec.Body.String(), e.gotrue.passwords)
@@ -163,7 +177,7 @@ func TestAdminUsersSetPassword(t *testing.T) {
 
 func TestAdminUsersActivation(t *testing.T) {
 	e := newEnv(t)
-	e.ex.rows = []fakeRow{{vals: []any{true}}, profileRow(nil)}
+	e.ex.rows = []fakeRow{{vals: []any{true, true}}, profileRow(nil)}
 	rec := e.do(http.MethodPost, fnPath, "admin-token", `{"action":"deactivate","app_user_id":"u1"}`, nil)
 	if rec.Code != 200 || decode(t, rec.Body.String())["auth_id"] != "" {
 		t.Fatalf("no identity: %d %s", rec.Code, rec.Body.String())
@@ -171,17 +185,17 @@ func TestAdminUsersActivation(t *testing.T) {
 	if e.ex.calls[0].Args[0] != "account.delete" {
 		t.Fatalf("needed permission %v", e.ex.calls[0].Args)
 	}
-	e.ex.rows = []fakeRow{{vals: []any{true}}, profileRow("auth-1")}
+	e.ex.rows = []fakeRow{{vals: []any{true, true}}, profileRow("auth-1")}
 	rec = e.do(http.MethodPost, fnPath, "admin-token", `{"action":"deactivate","app_user_id":"u1"}`, nil)
 	if rec.Code != 200 || e.gotrue.bans["auth-1"] != "876000h" {
 		t.Fatalf("ban: %d %v", rec.Code, e.gotrue.bans)
 	}
-	e.ex.rows = []fakeRow{{vals: []any{true}}, profileRow("auth-1")}
+	e.ex.rows = []fakeRow{{vals: []any{true, true}}, profileRow("auth-1")}
 	rec = e.do(http.MethodPost, fnPath, "admin-token", `{"action":"reactivate","app_user_id":"u1"}`, nil)
 	if rec.Code != 200 || e.gotrue.bans["auth-1"] != "none" {
 		t.Fatalf("unban: %d %v", rec.Code, e.gotrue.bans)
 	}
-	e.ex.rows = []fakeRow{{vals: []any{true}}, profileRow("auth-1")}
+	e.ex.rows = []fakeRow{{vals: []any{true, true}}, profileRow("auth-1")}
 	rec = e.do(http.MethodPost, fnPath, "admin-token", `{"action":"explode","app_user_id":"u1"}`, nil)
 	if rec.Code != 400 || decode(t, rec.Body.String())["error"] != "Unknown action." {
 		t.Fatalf("unknown: %d %s", rec.Code, rec.Body.String())

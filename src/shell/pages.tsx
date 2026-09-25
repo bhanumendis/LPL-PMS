@@ -28,7 +28,7 @@ export function Denied({ reason }: { reason?: string }) {
 }
 
 export function renderPage(route: Route, s: SessionCtx): ReactNode {
-  const { user, can, isAdmin, cases } = s;
+  const { user, can, isSuperAdmin, cases } = s;
   if (!user) return null;
   const page = route.page === "home" ? "" : route.page;
 
@@ -53,8 +53,8 @@ export function renderPage(route: Route, s: SessionCtx): ReactNode {
     case "roles": return can("role.view") ? <RolesPage /> : <Denied />;
     case "dataprotection": return can("dataprotection.view") ? <DataProtectionPage /> : <Denied />;
     case "audit": return can("audit.view") ? <AuditExplorer /> : <Denied />;
-    case "settings": return can("settings.view") ? <SettingsPage /> : <Denied />;
-    case "prompts": return isAdmin ? <PromptEngineerPage /> : <Denied reason="The Prompt Engineer Workspace is available to the Administrator only." />;
+    case "settings": return can("settings.view") || can("system.view") ? <SettingsPage /> : <Denied />;
+    case "prompts": return isSuperAdmin ? <PromptEngineerPage /> : <Denied reason="The Prompt Engineer Workspace is reserved for Super Admin (Group IT)." />;
     case "case": return route.caseId ? <CaseWorkspace key={route.caseId} caseId={route.caseId} /> : <CasesPage />;
     default: return can("case.view") ? <CasesPage /> : <Overview />;
   }

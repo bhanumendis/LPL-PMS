@@ -4,16 +4,17 @@
  * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
  */
 import React, { useState } from "react";
-import { Plus, KeyRound, UserRoundX, UserRoundCheck, Download } from "lucide-react";
+import { Plus, KeyRound, UserRoundX, UserRoundCheck, Download, ShieldCheck } from "lucide-react";
 import { useSession } from "@/App";
 import { store, uid, nowIso, hashPassword, passwordProblem } from "@/lib/store";
-import { ROLE_LABEL, ROLES } from "@/lib/rbac";
+import { ROLE_LABEL, ROLES, assignableRoles, canManageAccount, isGroupItEmail, isPrivileged } from "@/lib/rbac";
 import { Modal, Notice, useToast, Pill, Avatar, EmptyState, TextField, SelectField, PageHeader, StatStrip, CardList } from "@/lib/ui";
 import { BP, useMediaQuery } from "@/lib/hooks";
 import { fmtDateTime } from "@/lib/logic";
 import { Donut, Legend } from "@/lib/charts";
 import type { Role, User } from "@/lib/types";
 import { EVENTS } from "@/lib/audit";
+import { ChangeRoleDialog } from "./ChangeRole";
 
 /** Shown beside an admin-users failure when the Edge Function is not on the project yet. */
 const NOT_DEPLOYED_HINT = "Deploy the admin-users function (supabase/functions/admin-users) to issue sign-ins from here.";
@@ -25,6 +26,7 @@ export function StaffPage() {
   const [tab, setTab] = useState<"staff" | "students">("staff");
   const [creating, setCreating] = useState(false);
   const [passwordFor, setPasswordFor] = useState<User | null>(null);
+  const [roleFor, setRoleFor] = useState<User | null>(null);
   const canWrite = can("staff.write");
   const canAccount = can("account.write");
   const canDeactivate = can("account.delete");
@@ -32,8 +34,14 @@ export function StaffPage() {
   const staff = Object.values(users).filter((u) => u.role !== "student");
   const byRole = ROLES.filter((r) => r.id !== "student").map((r) => ({ label: r.label, n: staff.filter((u) => u.role === r.id && u.active).length })).filter((x) => x.n > 0);
 
+  /** What the signed-in user may do to this account; administrator accounts belong to Super Admin. */
+  const acts = (u: User) => {
+    const manage = canManageAccount(user, u) && u.id !== user?.id;
+    return { password: canAccount && canManageAccount(user, u), active: canDeactivate && manage, role: canWrite && manage };
+  };
+
   const toggle = async (u: User) => {
-    if (!user || u.id === user.id || !canDeactivate) return;
+    if (!user || !acts(u).active) return;
     const next = !u.active;
     const server = store.server;
     /** The profile flag is always written; on a server the identity itself is also blocked or unblocked. */
@@ -76,13 +84,14 @@ export function StaffPage() {
                 const own = Object.values(cases).find((c) => c.studentUserId === u.id);
                 return (
                   <div className="case-card">
-                    <div className="flex aic jcb g2"><span className="flex aic g2" style={{ minWidth: 0 }}><Avatar name={u.name} size={30} tone={u.role === "admin" ? "ink" : undefined} /><span className="ui small strong truncate">{u.name}</span></span><Pill tone={u.active ? "ok" : "bad"}>{u.active ? "Active" : "Deactivated"}</Pill></div>
+                    <div className="flex aic jcb g2"><span className="flex aic g2" style={{ minWidth: 0 }}><Avatar name={u.name} size={30} tone={isPrivileged(u.role) ? "ink" : undefined} /><span className="ui small strong truncate">{u.name}</span></span><Pill tone={u.active ? "ok" : "bad"}>{u.active ? "Active" : "Deactivated"}</Pill></div>
                     <p className="xs muted truncate">{ROLE_LABEL[u.role]} · {u.email}{u.phone ? ` · ${u.phone}` : ""}</p>
                     <p className="xs muted">{tab === "staff" ? `${openN} open case${openN === 1 ? "" : "s"}` : own?.ref ?? "No case"} · {u.lastSignInAt ? `signed in ${fmtDateTime(u.lastSignInAt)}` : "never signed in"}</p>
-                    {(canAccount || (canDeactivate && u.id !== user?.id)) && (
+                    {(acts(u).password || acts(u).active || acts(u).role) && (
                       <div className="flex wrap g1">
-                        {canAccount && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPasswordFor(u)}><KeyRound aria-hidden />Temporary password</button>}
-                        {canDeactivate && u.id !== user?.id && <button type="button" className={`btn btn-sm ${u.active ? "btn-danger-ghost" : "btn-ghost"}`} onClick={() => toggle(u)}>{u.active ? <><UserRoundX aria-hidden />Deactivate</> : <><UserRoundCheck aria-hidden />Reactivate</>}</button>}
+                        {acts(u).role && tab === "staff" && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRoleFor(u)}><ShieldCheck aria-hidden />Change role</button>}
+                        {acts(u).password && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPasswordFor(u)}><KeyRound aria-hidden />Temporary password</button>}
+                        {acts(u).active && <button type="button" className={`btn btn-sm ${u.active ? "btn-danger-ghost" : "btn-ghost"}`} onClick={() => toggle(u)}>{u.active ? <><UserRoundX aria-hidden />Deactivate</> : <><UserRoundCheck aria-hidden />Reactivate</>}</button>}
                       </div>
                     )}
                   </div>
@@ -98,7 +107,7 @@ export function StaffPage() {
                     const own = Object.values(cases).find((c) => c.studentUserId === u.id);
                     return (
                       <tr key={u.id}>
-                        <td><div className="flex aic g2"><Avatar name={u.name} size={30} tone={u.role === "admin" ? "ink" : undefined} /><span className="primary">{u.name}</span></div></td>
+                        <td><div className="flex aic g2"><Avatar name={u.name} size={30} tone={isPrivileged(u.role) ? "ink" : undefined} /><span className="primary">{u.name}</span></div></td>
                         <td>{ROLE_LABEL[u.role]}</td>
                         <td><p>{u.email}</p><p className="sub">{u.phone || "—"}</p></td>
                         <td>{u.branch || "—"}</td>
@@ -106,9 +115,10 @@ export function StaffPage() {
                         <td className="muted nowrap">{u.lastSignInAt ? fmtDateTime(u.lastSignInAt) : "Never"}</td>
                         <td><Pill tone={u.active ? "ok" : "bad"}>{u.active ? "Active" : "Deactivated"}</Pill></td>
                         <td className="right nowrap">
-                          {canAccount && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPasswordFor(u)}><KeyRound aria-hidden />Set temporary password</button>}
-                          {canDeactivate && u.id !== user?.id && <button type="button" className={`btn btn-sm ${u.active ? "btn-danger-ghost" : "btn-ghost"}`} onClick={() => toggle(u)}>{u.active ? <><UserRoundX aria-hidden />Deactivate</> : <><UserRoundCheck aria-hidden />Reactivate</>}</button>}
-                          {!canAccount && !(canDeactivate && u.id !== user?.id) && <span className="muted">—</span>}
+                          {acts(u).role && tab === "staff" && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRoleFor(u)} aria-label={`Change role of ${u.name}`}><ShieldCheck aria-hidden />Role</button>}
+                          {acts(u).password && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPasswordFor(u)}><KeyRound aria-hidden />Set temporary password</button>}
+                          {acts(u).active && <button type="button" className={`btn btn-sm ${u.active ? "btn-danger-ghost" : "btn-ghost"}`} onClick={() => toggle(u)}>{u.active ? <><UserRoundX aria-hidden />Deactivate</> : <><UserRoundCheck aria-hidden />Reactivate</>}</button>}
+                          {!acts(u).password && !acts(u).active && !acts(u).role && <span className="muted" aria-label={isPrivileged(u.role) ? "Managed by Super Admin" : "No actions"}>{isPrivileged(u.role) && user?.role !== "super_admin" ? "Super Admin managed" : "—"}</span>}
                         </td>
                       </tr>
                     );
@@ -123,6 +133,7 @@ export function StaffPage() {
       </div>
       {creating && <CreateProfile onClose={() => setCreating(false)} />}
       {passwordFor && <SetTemporaryPassword u={passwordFor} onClose={() => setPasswordFor(null)} />}
+      {roleFor && <ChangeRoleDialog target={roleFor} onClose={() => setRoleFor(null)} />}
     </div>
   );
 }
@@ -136,7 +147,8 @@ function CreateProfile({ onClose }: { onClose: () => void }) {
   const { user, audit, snap, can } = useSession();
   const toast = useToast();
   const canAccount = can("account.write");
-  const roles = ROLES.filter((r) => r.id !== "student");
+  const grantable = assignableRoles(user);
+  const roles = ROLES.filter((r) => r.id !== "student" && grantable.includes(r.id));
   const [f, setF] = useState({ name: "", email: "", phone: "", branch: snap.org.config.branches[0] ?? "", role: "counsellor" as Role, issue: true, password: "" });
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -149,6 +161,7 @@ function CreateProfile({ onClose }: { onClose: () => void }) {
     if (!user) return;
     setErr("");
     if (!f.name.trim() || !f.email.trim()) return setErr("Name and email are required.");
+    if (f.role === "super_admin" && !isGroupItEmail(f.email, await store.groupItDomains())) return setErr("Super Admin is restricted to Group IT email addresses.");
     if (issue) { const problem = passwordProblem(f.password); if (problem) return setErr(problem); }
     setBusy(true);
     try {

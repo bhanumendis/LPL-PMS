@@ -12,7 +12,7 @@ import { blankCase, ISO, user } from "@/test/fixtures";
 import type { CaseRecord, DocItem, GateSubmission } from "@/lib/types";
 
 const users = {
-  admin: user({ id: "admin", role: "admin" }),
+  admin: user({ id: "admin", role: "super_admin" }),
   tl: user({ id: "tl", role: "team_leader" }),
   couns: user({ id: "couns", role: "counsellor" }),
   stu: user({ id: "stu", role: "student" }),

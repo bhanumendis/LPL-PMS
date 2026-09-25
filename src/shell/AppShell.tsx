@@ -32,11 +32,11 @@ import { StudentRail, railEnabled, type RailMode } from "./rail/StudentRail";
 
 export function AppShell() {
   const s = useSession();
-  const { user, route, go, can, isAdmin, snap, signOut, theme, toggleTheme } = s;
+  const { user, route, go, can, isSuperAdmin, snap, signOut, theme, toggleTheme } = s;
   const role = user?.role ?? "student";
   const scope = user ? caseScopeOf(snap.org.config, user.role) : "none";
   const seesAll = scope === "all";
-  const navInput = useMemo<NavInput>(() => ({ role, can, isAdmin, seesAll, noCases: scope === "none" }), [role, can, isAdmin, seesAll, scope]);
+  const navInput = useMemo<NavInput>(() => ({ role, can, isSuperAdmin, seesAll, noCases: scope === "none" }), [role, can, isSuperAdmin, seesAll, scope]);
   const { primary, more } = useMemo(() => destinationsFor(navInput), [navInput]);
   const moreDest = useMemo(() => moreDestination(more), [more]);
   const page = route.page === "home" ? "" : route.page;

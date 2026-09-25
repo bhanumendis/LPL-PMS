@@ -115,7 +115,8 @@ export const EVENTS = {
     action: active ? "Account reactivated" : "Account deactivated", eventType: "update", entityType: "account", entityId: u.id, entityLabel: u.name, target: u.email, detail,
     summary: `${active ? "Reactivated" : "Deactivated"} ${u.name}`, changes: [{ field: "active", label: "Active", old: !active, new: active }],
   }),
-  adminBootstrapped: (u: Pick<UserLike, "id" | "name" | "email">): AuditEvent => ({ action: "Administrator account created", eventType: "create", entityType: "account", entityId: u.id, entityLabel: u.name, target: u.email, summary: "Created the first administrator" }),
+  roleAssigned: (u: Pick<UserLike, "id" | "name" | "email">, from: string, to: string): AuditEvent => ({ action: "Role changed", eventType: "permission", entityType: "user", entityId: u.id, entityLabel: u.name, target: u.email, summary: `Changed ${u.name}'s role from ${from} to ${to}`, changes: [{ field: "role", label: "Role", old: from, new: to }] }),
+  adminBootstrapped: (u: Pick<UserLike, "id" | "name" | "email">): AuditEvent => ({ action: "Super Admin account created", eventType: "create", entityType: "account", entityId: u.id, entityLabel: u.name, target: u.email, summary: "Created the first administrator" }),
 
   // roles
   permissionChanged: (perm: string, role: string, granted: boolean): AuditEvent => ({

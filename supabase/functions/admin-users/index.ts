@@ -69,6 +69,9 @@ Deno.serve(async (req: Request) => {
   const needed = action === "deactivate" || action === "reactivate" ? "account.delete" : "account.write";
   const { data: allowed, error: permError } = await caller.rpc("app_can", { perm: needed });
   if (permError || allowed !== true) return json({ error: `This action requires the ${needed} permission.` }, 403);
+  // Administrator accounts (SUPER ADMIN, ADMIN) are managed by a SUPER ADMIN only.
+  const { data: manage, error: manageError } = await caller.rpc("can_manage_account", { p_target: appUserId });
+  if (manageError || manage !== true) return json({ error: "Only a SUPER ADMIN may manage administrator accounts." }, 403);
 
   const admin = createClient(url, service, { auth: { persistSession: false, autoRefreshToken: false } });
   const { data: profile, error: profileError } = await admin
@@ -76,7 +79,7 @@ Deno.serve(async (req: Request) => {
     .select("id, email, name, phone, auth_id, active")
     .eq("id", appUserId)
     .maybeSingle();
-  if (profileError) return json({ error: profileError.message }, 500);
+  if (profileError) { console.error("admin-users profile lookup", profileError.message); return json({ error: "The account service could not complete the request." }, 500); }
   if (!profile) return json({ error: "No profile with that id. Create the profile first." }, 404);
 
   switch (action) {
@@ -95,7 +98,7 @@ Deno.serve(async (req: Request) => {
       });
       if (error || !data.user) return json({ error: error?.message ?? "The identity provider refused the request." }, 400);
       const { error: linkError } = await admin.from("app_users").update({ auth_id: data.user.id }).eq("id", profile.id).is("auth_id", null);
-      if (linkError) return json({ error: `Identity created but not linked: ${linkError.message}` }, 500);
+      if (linkError) { console.error("admin-users link", data.user.id, linkError.message); return json({ error: "The sign-in was created but could not be linked to the profile. Ask Group IT to check the server log." }, 500); }
       return json({ auth_id: data.user.id });
     }
     case "set_password": {

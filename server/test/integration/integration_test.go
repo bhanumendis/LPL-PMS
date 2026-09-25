@@ -58,6 +58,11 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
+	// The suite's accounts live on test.local, which plays the Group IT domain here.
+	if err := execSQL(ctx, dsn, "insert into public.group_it_domains (domain, note) values ('test.local', 'integration suite') on conflict do nothing"); err != nil {
+		fmt.Println("integration: group IT domain:", err)
+		os.Exit(1)
+	}
 	var err error
 	pool, err = db.Open(ctx, dsn, 4, false, "service_role")
 	if err != nil {
@@ -91,12 +96,16 @@ func applySQL(ctx context.Context, dsn, file string) error {
 	if err != nil {
 		return err
 	}
+	return execSQL(ctx, dsn, string(sqlText))
+}
+
+func execSQL(ctx context.Context, dsn, sqlText string) error {
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(ctx)
-	results, err := conn.PgConn().Exec(ctx, string(sqlText)).ReadAll()
+	results, err := conn.PgConn().Exec(ctx, sqlText).ReadAll()
 	if err != nil {
 		return err
 	}
@@ -176,7 +185,8 @@ func mintToken(t *testing.T, authID string) string {
 }
 
 // bootstrapAdmin performs the first sign-up as GoTrue would: an auth.users row with no
-// app_metadata on an empty project. The trigger creates the Administrator profile.
+// app_metadata on an empty project, from a Group IT address. The trigger creates the first
+// SUPER ADMIN profile.
 func bootstrapAdmin(t *testing.T) identity {
 	t.Helper()
 	var id identity
@@ -338,7 +348,7 @@ func TestBootstrap(t *testing.T) {
 	admin := bootstrapAdmin(t)
 	expect(t, rpc(t, "needs_bootstrap", "", ""), 200, "false")
 	r := call(t, http.MethodGet, "/rest/v1/app_users?select=*&auth_id=eq."+admin.AuthID, admin.Token, "", nil)
-	expect(t, r, 200, `"role":"admin"`)
+	expect(t, r, 200, `"role":"super_admin"`)
 	if rows := rowsOf(t, r.Body); len(rows) != 1 || rows[0]["id"] != admin.AppID || rows[0]["email"] != "admin@test.local" {
 		t.Fatalf("profile %v", rows)
 	}
@@ -348,42 +358,55 @@ func TestBootstrap(t *testing.T) {
 }
 
 // defaultPermissions transcribes DEFAULT_PERMISSIONS from src/lib/rbac.ts. If this test
-// fails, the TypeScript matrix and permission_defaults in schema.sql have drifted apart.
+// fails, the TypeScript matrix and permission_defaults in the schema have drifted apart.
+// SUPER ADMIN is implicit in every cell and is checked separately.
 var defaultPermissions = map[string][]string{
 	"case.view": {"admin", "team_leader", "counsellor", "student"}, "case.read": {"admin", "team_leader", "counsellor", "student"},
-	"case.write": {"admin", "team_leader", "counsellor", "student"}, "case.delete": {"admin"}, "case.download": {"admin", "team_leader", "counsellor"},
+	"case.write": {"admin", "team_leader", "counsellor", "student"}, "case.delete": {}, "case.download": {"admin", "team_leader", "counsellor"},
 	"sensitive.view": {"admin", "team_leader", "counsellor", "student"}, "sensitive.read": {"admin", "team_leader", "counsellor"}, "sensitive.write": {"admin", "team_leader", "counsellor", "student"},
 	"assignment.view": {"admin", "team_leader", "counsellor", "student"}, "assignment.write": {"admin", "team_leader"},
 	"document.view": {"admin", "team_leader", "counsellor", "student"}, "document.read": {"admin", "team_leader", "counsellor", "student"},
-	"document.write": {"admin", "counsellor", "student"}, "document.delete": {"admin"}, "document.download": {"admin", "team_leader", "counsellor", "student"},
+	"document.write": {"admin", "counsellor", "student"}, "document.delete": {}, "document.download": {"admin", "team_leader", "counsellor", "student"},
 	"review.view": {"admin", "team_leader", "counsellor", "student"}, "review.write": {"admin", "team_leader", "counsellor"},
-	"gate.view": {"admin", "team_leader", "counsellor"}, "gate.read": {"admin", "team_leader", "counsellor"}, "gate.write": {"admin", "team_leader"},
+	"gate.view": {"admin", "team_leader", "counsellor"}, "gate.read": {"admin", "team_leader", "counsellor"}, "gate.write": {"team_leader"},
 	"escalation.view": {"admin", "team_leader"}, "escalation.read": {"admin", "team_leader"},
 	"analytics.view": {"admin", "team_leader"}, "analytics.read": {"admin", "team_leader"}, "analytics.download": {"admin", "team_leader"},
-	"staff.view": {"admin", "team_leader", "counsellor"}, "staff.read": {"admin", "team_leader"}, "staff.write": {"admin"}, "staff.delete": {"admin"}, "staff.download": {"admin"},
+	"staff.view": {"admin", "team_leader", "counsellor"}, "staff.read": {"admin", "team_leader"}, "staff.write": {"admin"}, "staff.delete": {}, "staff.download": {"admin"},
 	"account.write": {"admin"}, "account.delete": {"admin"},
-	"role.view": {"admin"}, "role.read": {"admin"}, "role.write": {"admin"},
-	"audit.view": {"admin", "team_leader"}, "audit.read": {"admin", "team_leader"}, "audit.download": {"admin"},
-	"settings.view": {"admin"}, "settings.read": {"admin"}, "settings.write": {"admin"}, "settings.delete": {"admin"},
+	"role.view": {"admin"}, "role.read": {"admin"}, "role.write": {},
+	"audit.view": {"admin", "team_leader"}, "audit.read": {"admin", "team_leader"}, "audit.download": {},
+	"settings.view": {"admin"}, "settings.read": {"admin"}, "settings.write": {"admin"},
 	"dataprotection.view": {"admin", "team_leader"}, "dataprotection.read": {"admin", "team_leader"}, "dataprotection.write": {"admin", "team_leader"},
-	"dataprotection.delete": {"admin"}, "dataprotection.download": {"admin", "team_leader"},
-	"prompt.view": {"admin"}, "prompt.read": {"admin"}, "prompt.write": {"admin"}, "prompt.delete": {"admin"}, "prompt.download": {"admin"},
+	"dataprotection.delete": {}, "dataprotection.download": {"admin", "team_leader"},
+	"system.view": {}, "system.read": {}, "system.write": {}, "system.delete": {},
+	"prompt.view": {}, "prompt.read": {}, "prompt.write": {}, "prompt.delete": {}, "prompt.download": {},
 }
 
 func TestPermissionMatrixMatchesTypeScriptDefaults(t *testing.T) {
 	reset(t)
 	ids := map[string]identity{
-		"admin":       bootstrapAdmin(t),
+		"super_admin": bootstrapAdmin(t),
+		"admin":       provision(t, "admin", "a@test.local", "Placement Admin"),
 		"team_leader": provision(t, "team_leader", "tl@test.local", "Team Leader"),
 		"counsellor":  provision(t, "counsellor", "c@test.local", "Counsellor"),
 		"student":     provision(t, "student", "s@test.local", "Student"),
 	}
-	if len(defaultPermissions) != 52 {
-		t.Fatalf("expected 52 cells, have %d", len(defaultPermissions))
+	if len(defaultPermissions) != 55 {
+		t.Fatalf("expected 55 cells, have %d", len(defaultPermissions))
+	}
+	var n int
+	system(t, func(ctx context.Context, ex db.Executor) error {
+		return ex.QueryRow(ctx, "select count(*)::int from public.permission_defaults").Scan(&n)
+	})
+	if n != len(defaultPermissions) {
+		t.Fatalf("permission_defaults has %d rows, the TypeScript matrix %d", n, len(defaultPermissions))
 	}
 	for perm, roles := range defaultPermissions {
 		for role, id := range ids {
 			want := "false"
+			if role == "super_admin" {
+				want = "true"
+			}
 			for _, r := range roles {
 				if r == role {
 					want = "true"
@@ -596,7 +619,7 @@ func TestOwnProfileTouchAndSilentDelete(t *testing.T) {
 	}
 	// A student may not change their own role: the guard trigger refuses.
 	r = call(t, http.MethodPatch, "/rest/v1/app_users?id=eq."+s.AppID, s.Token, `{"role":"admin"}`, map[string]string{"Prefer": "return=minimal"})
-	expect(t, r, 400, "Only an administrator may manage administrator profiles")
+	expect(t, r, 400, "You cannot change your own role or activation state")
 
 	// Without case.delete, DELETE matches no rows and answers 204, as under PostgREST.
 	r = call(t, http.MethodDelete, "/rest/v1/cases?id=eq.case-a", c.Token, "", map[string]string{"Prefer": "return=minimal"})
