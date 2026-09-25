@@ -22,6 +22,7 @@ import { defaultAudit, defaultCases, defaultConfig, defaultPrompts, normalizeCon
 import type { NotificationRow, NotificationState, NotificationType, Priority } from "@/notifications/types";
 import type { PushDevice, PushSubscriptionInput } from "@/notifications/push";
 import { BROWSER_STORAGE_ALLOWED } from "./runtime";
+import { caseQueryToWire, clampLimit, type CaseFilter, type CaseQuery, type CaseRow, type Dashboard, type GateQuery, type GateRow, type GateStats, type Page, type ReadModel, type RegisterCursor, type TransferQuery, type TransferRow, type UserCursor, type UserQuery, type UserRow as ProfileListRow } from "./queries";
 
 export interface ServerConfig { url: string; anonKey: string }
 
@@ -97,6 +98,17 @@ class Client {
   constructor(readonly cfg: ServerConfig) {}
 
   get signedIn(): boolean { return this.session !== null; }
+
+  /** The identity in the current access token, read locally (no request). */
+  get tokenSubject(): string | null {
+    const t = this.session?.accessToken;
+    if (!t) return null;
+    try {
+      const b64 = t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+      const sub = (JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4))) as { sub?: unknown }).sub;
+      return typeof sub === "string" ? sub : null;
+    } catch { return null; }
+  }
 
   private headers(json = true): Record<string, string> {
     const h: Record<string, string> = { apikey: this.cfg.anonKey, Authorization: `Bearer ${this.session?.accessToken ?? this.cfg.anonKey}` };
@@ -291,7 +303,7 @@ interface UserRow {
   id: string; auth_id: string | null; email: string; name: string; phone: string | null; branch: string | null;
   role: User["role"]; active: boolean; created_at: string; created_by: string | null; last_sign_in_at: string | null;
 }
-interface CaseRow { id: string; ref: string; status: string; counsellor_id: string | null; student_user_id: string | null; rev: number; updated_at: string; data: CaseRecord }
+interface CaseDbRow { id: string; ref: string; status: string; counsellor_id: string | null; student_user_id: string | null; rev: number; updated_at: string; data: CaseRecord }
 interface AuditRow {
   id: string; at: string; actor_id: string; actor_name: string; actor_role: User["role"]; action: string; target: string | null; detail: string | null;
   event_type?: string | null; entity_type?: string | null; entity_id?: string | null; entity_label?: string | null; outcome?: string | null;
@@ -360,6 +372,45 @@ function toAudit(r: AuditRow): AuditEntry {
   };
 }
 
+/** snake_case → camelCase keys. */
+function camel(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) out[k.replace(/_([a-z0-9])/g, (_m, c: string) => c.toUpperCase())] = v;
+  return out;
+}
+
+/** Instants from the database ("…+00:00") in the ISO form the rest of the client uses. */
+const iso = (v: unknown): string | null => (typeof v === "string" && v ? new Date(v).toISOString() : null);
+const CASE_INSTANTS = ["gatePendingAt", "cisStartAt", "cis2From", "offerLapseAt", "arrivalAt", "holdReviewAt", "retentionAnchorAt", "lastEventAt", "cisSentAt", "offerDecidedAt", "retentionDueAt"] as const;
+
+function toCaseRow(r: Record<string, unknown>): CaseRow {
+  const c = camel(r);
+  for (const k of CASE_INSTANTS) c[k] = iso(c[k]);
+  c.createdAt = iso(c.createdAt) ?? "";
+  c.updatedAt = iso(c.updatedAt) ?? "";
+  c.studentName = c.studentName ?? "";
+  c.studentEmail = c.studentEmail ?? "";
+  return c as unknown as CaseRow;
+}
+
+function toTransferRow(r: Record<string, unknown>): TransferRow {
+  const c = camel(r);
+  c.id = c.transferId; delete c.transferId;
+  c.at = iso(c.at);
+  return c as unknown as TransferRow;
+}
+
+function toGateRow(r: Record<string, unknown>): GateRow {
+  const c = camel(r);
+  c.id = c.gateId; delete c.gateId;
+  for (const k of ["submittedAt", "decidedAt", "addressedAt"]) c[k] = iso(c[k]);
+  return c as unknown as GateRow;
+}
+
+function toProfileListRow(r: UserRow & { has_sign_in?: boolean; case_id?: string | null; case_ref?: string | null; cursor?: UserCursor }): ProfileListRow {
+  return { ...toUser(r), hasSignIn: !!r.has_sign_in, caseId: r.case_id ?? null, caseRef: r.case_ref ?? null, cursor: r.cursor as UserCursor };
+}
+
 function promptColumns(p: PromptTemplate): Omit<PromptRow, "id"> {
   return { title: p.title, status: p.status, version: p.version, updated_at: p.updatedAt, updated_by: p.updatedBy, data: p };
 }
@@ -405,29 +456,116 @@ export class SupabaseBackend {
       const empty = await this.client.rpc<boolean>("needs_bootstrap").catch(() => false);
       return { org: { config: { ...defaultConfig(), setupComplete: !empty }, users: {} } as OrgState, cases: defaultCases(), audit: defaultAudit(), prompts: defaultPrompts() };
     }
-    // The audit log is no longer part of the snapshot: the explorer pages it through audit_page.
-    const [orgRows, userRows, caseRows, promptRows] = await Promise.all([
+    // What a session needs up front, and nothing that grows with the organisation: the
+    // configuration, the staff directory, the caller's own profile and (for a student) their
+    // own case. Lists, registers and dashboards are read a page at a time (this.read); a case
+    // document is fetched when it is opened (getCase). The audit log pages through audit_page.
+    const [org, prompts] = await Promise.all([this.loadOrg(), this.loadPrompts()]);
+    const self = Object.values(org.users).find((u) => u.id === this.selfId);
+    const caseRows = self?.role === "student" ? await this.client.select<CaseDbRow>("cases", "&order=updated_at.desc") : [];
+    const cases: Record<string, CaseRecord> = {};
+    caseRows.forEach((r) => { cases[r.id] = r.data; });
+    return { org, cases: { cases, rev: caseRows.reduce((n, r) => n + (r.rev ?? 0), 0) } as CasesState, audit: defaultAudit(), prompts };
+  }
+
+  /** The signed-in profile's id, known after loadOrg. */
+  private selfId: string | null = null;
+
+  /** Configuration, every staff profile, and the caller's own profile (students are paged by users_page). */
+  async loadOrg(): Promise<OrgState> {
+    const sub = this.client.tokenSubject;
+    const [orgRows, staffRows, selfRows] = await Promise.all([
       this.client.select<OrgRow>("org_config"),
-      this.client.select<UserRow>("app_users"),
-      this.client.select<CaseRow>("cases", "&order=updated_at.desc"),
-      // Prompts are administrator-only; other roles receive an empty set from RLS.
-      this.client.select<PromptRow>("prompts", "&order=updated_at.desc").catch(() => [] as PromptRow[]),
+      this.client.select<UserRow>("app_users", "&role=neq.student"),
+      sub ? this.client.select<UserRow>("app_users", `&auth_id=eq.${encodeURIComponent(sub)}`) : Promise.resolve([] as UserRow[]),
     ]);
     this.storedConfig = (orgRows[0]?.config ?? {}) as unknown as Record<string, unknown>;
     const config = { ...normalizeConfig(orgRows[0]?.config ?? {}), setupComplete: true };
     const users: Record<string, User> = {};
-    userRows.forEach((r) => { users[r.id] = toUser(r); });
-    const cases: Record<string, CaseRecord> = {};
-    caseRows.forEach((r) => { cases[r.id] = r.data; });
-    const prompts: Record<string, PromptTemplate> = {};
-    promptRows.forEach((r) => { prompts[r.id] = r.data; });
-    return {
-      org: { config, users } as OrgState,
-      cases: { cases, rev: caseRows.reduce((n, r) => n + (r.rev ?? 0), 0) } as CasesState,
-      audit: defaultAudit(),
-      prompts: { prompts, rev: promptRows.reduce((n, r) => n + (r.version ?? 0), 0) } as PromptsState,
-    };
+    for (const r of [...staffRows, ...selfRows]) users[r.id] = toUser(r);
+    this.selfId = selfRows[0]?.id ?? null;
+    return { config, users } as OrgState;
   }
+
+  /** Prompts are administrator-only; other roles receive an empty set from RLS. */
+  async loadPrompts(): Promise<PromptsState> {
+    const rows = await this.client.select<PromptRow>("prompts", "&order=updated_at.desc").catch(() => [] as PromptRow[]);
+    const prompts: Record<string, PromptTemplate> = {};
+    rows.forEach((r) => { prompts[r.id] = r.data; });
+    return { prompts, rev: rows.reduce((n, r) => n + (r.version ?? 0), 0) } as PromptsState;
+  }
+
+  /** One case document, or null when it does not exist or the caller may not read it. */
+  async getCase(id: string): Promise<CaseRecord | null> {
+    const rows = await this.client.select<CaseDbRow>("cases", `&id=eq.${encodeURIComponent(id)}`);
+    return rows[0]?.data ?? null;
+  }
+
+  /** A new case, at revision 1. */
+  async insertCase(c: CaseRecord): Promise<void> {
+    await this.client.insert("cases", [{ id: c.id, ref: c.ref, rev: 1, data: { ...c, rev: 1 } }]);
+  }
+
+  /** An existing case at its next revision (409 when someone else saved first). */
+  async saveCase(c: CaseRecord): Promise<void> {
+    await this.client.rpc<number>("save_case", { p_id: c.id, p_rev: c.rev, p_data: c });
+  }
+
+  /** One profile by id, as row-level security shows it. */
+  async getUser(id: string): Promise<User | null> {
+    const rows = await this.client.select<UserRow>("app_users", `&id=eq.${encodeURIComponent(id)}`);
+    return rows[0] ? toUser(rows[0]) : null;
+  }
+
+  /** Writes the columns of a profile that changed. */
+  async saveUser(next: User, prev: User): Promise<void> {
+    const diff = changedColumns(userColumns(prev), userColumns(next));
+    if (Object.keys(diff).length) await this.client.patch("app_users", `id=eq.${encodeURIComponent(next.id)}`, diff);
+  }
+
+  /** Whether a profile the caller can see already uses this address (the database's unique key is the backstop). */
+  async emailTaken(email: string): Promise<boolean> {
+    const rows = await this.client.select<UserRow>("app_users", `&email=eq.${encodeURIComponent(email.trim().toLowerCase())}`);
+    return rows.length > 0;
+  }
+
+  /** A counter per topic (cases, users, config, prompts), bumped by every writing statement. */
+  async changeVersions(): Promise<Record<string, number> | null> {
+    if (!this.client.signedIn) return null;
+    return await this.client.rpc<Record<string, number>>("change_versions").catch(() => null);
+  }
+
+  /** Lists, counts, registers and dashboards, answered by the database a page at a time. */
+  readonly read: ReadModel = {
+    casesPage: async (q: CaseQuery): Promise<Page<CaseRow>> => {
+      const limit = clampLimit(q.limit);
+      const rows = await this.client.rpc<Record<string, unknown>[]>("cases_page", { p: caseQueryToWire({ ...q, limit }) });
+      const out = (Array.isArray(rows) ? rows : []).map(toCaseRow);
+      return { rows: out, next: out.length === limit ? out[out.length - 1].cursor : null };
+    },
+    casesCount: async (f: CaseFilter & { now?: string }, cap?: number): Promise<number> =>
+      Number(await this.client.rpc<number>("cases_count", { p: caseQueryToWire({ ...f, ...(cap ? { cap } : {}) }) })),
+    dashboard: async (): Promise<Dashboard> => await this.client.rpc<Dashboard>("dashboard_summary", { p: {} }),
+    transfersPage: async (q: TransferQuery): Promise<Page<TransferRow, RegisterCursor>> => {
+      const limit = clampLimit(q.limit);
+      const rows = await this.client.rpc<Record<string, unknown>[]>("transfers_page", { p: { ...q, limit } });
+      const out = (Array.isArray(rows) ? rows : []).map(toTransferRow);
+      return { rows: out, next: out.length === limit ? out[out.length - 1].cursor : null };
+    },
+    gatesPage: async (q: GateQuery): Promise<Page<GateRow, RegisterCursor>> => {
+      const limit = clampLimit(q.limit);
+      const rows = await this.client.rpc<Record<string, unknown>[]>("gates_page", { p: { ...q, limit } });
+      const out = (Array.isArray(rows) ? rows : []).map(toGateRow);
+      return { rows: out, next: out.length === limit ? out[out.length - 1].cursor : null };
+    },
+    gateStats: async (): Promise<GateStats> => await this.client.rpc<GateStats>("gate_stats"),
+    usersPage: async (q: UserQuery): Promise<Page<ProfileListRow, UserCursor>> => {
+      const limit = clampLimit(q.limit);
+      const rows = await this.client.rpc<(UserRow & { has_sign_in?: boolean; cursor?: UserCursor })[]>("users_page", { p: { ...q, limit } });
+      const out = (Array.isArray(rows) ? rows : []).map(toProfileListRow);
+      return { rows: out, next: out.length === limit ? out[out.length - 1].cursor : null };
+    },
+  };
 
   /**
    * Writes only what changed, as INSERTs for new rows and PATCHes for existing ones. The
@@ -576,12 +714,6 @@ export class SupabaseBackend {
   async listPushSubscriptions(userId: string): Promise<PushDevice[]> {
     const rows = await this.client.select<{ endpoint: string; created_at: string; last_seen_at: string; user_agent: string | null }>("push_subscriptions", `&user_id=eq.${encodeURIComponent(userId)}&revoked_at=is.null&order=created_at.desc`);
     return rows.map((r) => ({ endpoint: r.endpoint, createdAt: r.created_at, lastSeenAt: r.last_seen_at, userAgent: r.user_agent ?? undefined }));
-  }
-
-  /** Cheap change probe used by polling; null when the project predates the function. */
-  async version(): Promise<string | null> {
-    if (!this.client.signedIn) return null;
-    return await this.client.rpc<string>("workspace_version").catch(() => null);
   }
 
   /** Wiping a live database from a browser is not a feature. */

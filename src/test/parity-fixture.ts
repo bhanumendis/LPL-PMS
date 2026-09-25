@@ -11,6 +11,7 @@
 import type { CaseRecord, OrgConfig } from "@/lib/types";
 import { defaultConfig } from "@/lib/defaults";
 import { dashboardOf, evaluateCase, summarizeCase, type CaseSummary, type DashboardSummary } from "@/lib/summary";
+import { caseQueryToWire, localCasesPage, type CaseQuery } from "@/lib/queries";
 import { generateCases } from "./generate";
 
 export const PARITY_NOW = "2026-09-25T12:00:00.000Z";
@@ -32,6 +33,20 @@ export function summaryRow(s: CaseSummary): Record<string, unknown> {
   return out;
 }
 
+/**
+ * Queries whose complete, ordered answers the database must reproduce (paged 37 at a time).
+ * Between them they use every sort, both directions, and every filter.
+ */
+export const PARITY_QUERIES: CaseQuery[] = [
+  {}, { dir: "asc" }, { status: ["open"] }, { status: ["hold", "deferred"] }, { stage: 4 }, { counsellor: "c2" }, { counsellor: "none" },
+  { sort: "severity" }, { sort: "severity", dir: "desc" }, { sort: "urgency" }, { sort: "urgency", clock: "due" }, { sort: "urgency", dir: "desc", clock: "breached" },
+  { sort: "retention" }, { sort: "retention", retention: ["overdue", "due_soon"] }, { sort: "gate", gate: "pending" }, { sort: "gate", dir: "desc", gate: "pending" },
+  { attention: true }, { attention: true, sort: "severity" }, { q: "student 1" }, { q: "lpl-gen-2", sort: "severity" }, { docs: true }, { profile: true },
+  { holdReview: true }, { gate: "returned", sort: "severity" }, { severity: ["warn"] }, { retention: ["held", "disposed"], sort: "retention" },
+];
+
+export interface ParityQuery { config: string; p: Record<string, unknown>; ids: string[] }
+
 export interface ParityFixture {
   now: string;
   configs: typeof PARITY_CONFIGS;
@@ -39,13 +54,14 @@ export interface ParityFixture {
   summaries: Record<string, Record<string, unknown>>;
   states: Record<string, Record<string, Record<string, unknown>>>;
   dashboards: Record<string, DashboardSummary>;
+  queries: ParityQuery[];
 }
 
 export function buildParityFixture(n = 400, seed = 20260925): ParityFixture {
   const now = new Date(PARITY_NOW).getTime();
   const cases = generateCases(n, seed, now);
   const summaries = cases.map(summarizeCase);
-  const fixture: ParityFixture = { now: PARITY_NOW, configs: PARITY_CONFIGS, cases, summaries: {}, states: {}, dashboards: {} };
+  const fixture: ParityFixture = { now: PARITY_NOW, configs: PARITY_CONFIGS, cases, summaries: {}, states: {}, dashboards: {}, queries: [] };
   for (const s of summaries) fixture.summaries[s.id] = summaryRow(s);
   for (const [name, part] of Object.entries(PARITY_CONFIGS)) {
     const config = { ...defaultConfig(), ...part };
@@ -61,6 +77,17 @@ export function buildParityFixture(n = 400, seed = 20260925): ParityFixture {
       };
     }
     fixture.dashboards[name] = dashboardOf(summaries, config, now);
+    for (const q of PARITY_QUERIES) {
+      const ids: string[] = [];
+      let after: CaseQuery["after"] = null;
+      for (;;) {
+        const page = localCasesPage(cases, { ...q, limit: 37, after, now: PARITY_NOW }, config);
+        ids.push(...page.rows.map((r) => r.id));
+        if (!page.next) break;
+        after = page.next;
+      }
+      fixture.queries.push({ config: name, p: caseQueryToWire(q), ids });
+    }
   }
   return fixture;
 }

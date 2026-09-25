@@ -7,7 +7,7 @@
  * fixture; this closes the loop.)
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { deriveCaseSignals } from "./signals";
+import { deriveCaseSignals, signalsFromSummary } from "./signals";
 import { summarizeCase, evaluateCase, dashboardOf } from "./summary";
 import { averageLeadTime, caseChannel, caseDestination, consentCoverage, countBy, docStats, funnel, monthlyVolume, retentionSummary, slaCompliance, unsafeguardedTransfers, allTransfers } from "./logic";
 import { defaultConfig } from "./defaults";
@@ -73,6 +73,27 @@ describe("summary agrees with signals.ts and logic.ts", () => {
       expect(d.byStage.map((b) => b.bad)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => open.filter((s) => s.stage.n === n && s.severity === "bad").length));
     });
   }
+
+  it("signals from a summary match signals from the document", () => {
+    const config = defaultConfig();
+    let compared = 0;
+    for (const c of generateCases(800, 17, NOW)) {
+      const full = deriveCaseSignals(c, config);
+      // A summary records one returned and one pending gate; skip the rare case with two of a kind.
+      const kinds = full.attention.map((a) => a.kind);
+      if (kinds.filter((k) => k === "gate-returned").length > 1 || kinds.filter((k) => k === "gate-pending").length > 1) continue;
+      const lite = signalsFromSummary(summarizeCase(c), config, NOW);
+      const where = c.id;
+      expect(lite.attention.map((a) => [a.kind, a.label, a.severity, a.step ?? null]), where).toEqual(full.attention.map((a) => [a.kind, a.label, a.severity, a.step ?? null]));
+      expect(lite.severity, where).toBe(full.severity);
+      expect(lite.flags.map((f) => [f.id, f.days, f.state, f.step, f.due.getTime()]), where).toEqual(full.flags.map((f) => [f.id, f.days, f.state, f.step, f.due.getTime()]));
+      expect(lite.stages.map((p) => [p.id, p.done, p.total, p.complete, p.current]), where).toEqual(full.stages.map((p) => [p.id, p.done, p.total, p.complete, p.current]));
+      expect([lite.stage.id, lite.currentStep, lite.progress], where).toEqual([full.stage.id, full.currentStep, full.progress]);
+      expect([lite.breached, lite.dueSoon, lite.docsToReview, lite.profileSubmitted, lite.retention, lite.holdReviewDue], where).toEqual([full.breached, full.dueSoon, full.docsToReview, full.profileSubmitted, full.retention, full.holdReviewDue]);
+      compared++;
+    }
+    expect(compared).toBeGreaterThan(700);
+  });
 
   it("the generated cases exercise every state the comparison depends on", () => {
     const config = defaultConfig();

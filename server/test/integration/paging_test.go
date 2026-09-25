@@ -600,6 +600,11 @@ func TestRegistersPageCompletely(t *testing.T) {
 	rows := allPages(t, "transfers_page", w.super.Token, map[string]any{}, 23, tk)
 	sameSequence(t, "transfers_page", sqlOrder(t, "select case_id || '/' || transfer_id from public.case_transfers order by sort_at desc, case_id collate \"C\" desc, transfer_id collate \"C\" desc"), rows, tk)
 	gk := func(r map[string]any) string { return fmt.Sprint(r["case_id"], "/", r["gate_id"]) }
+	for _, r := range allPages(t, "gates_page", w.super.Token, map[string]any{"status": "pending"}, 50, gk) {
+		if name, _ := r["student_name"].(string); !strings.HasPrefix(name, "Student ") {
+			t.Fatalf("gate %v carries student name %v", gk(r), r["student_name"])
+		}
+	}
 	sameSequence(t, "gates_page decided", sqlOrder(t, "select case_id || '/' || gate_id from public.case_gates where status in ('approved', 'returned') order by sort_decided desc, case_id collate \"C\" desc, gate_id collate \"C\" desc"),
 		allPages(t, "gates_page", w.super.Token, map[string]any{}, 17, gk), gk)
 	sameSequence(t, "gates_page pending", sqlOrder(t, "select case_id || '/' || gate_id from public.case_gates where status = 'pending' order by sort_submitted, case_id collate \"C\", gate_id collate \"C\""),
@@ -662,6 +667,18 @@ func TestUsersPageFollowsPolicyAndSearch(t *testing.T) {
 	if n := len(allPages(t, "users_page", w.super.Token, map[string]any{"q": "n 1", "active": true}, 13, uk)); n == 0 {
 		t.Fatal("short search found nothing")
 	}
+	// A student's row links to their case.
+	var linked bool
+	for _, r := range allPages(t, "users_page", w.super.Token, map[string]any{"role": "student"}, 50, uk) {
+		if r["id"] == w.student.AppID {
+			linked = r["case_id"] == w.studentCase && r["case_ref"] != nil
+		} else if r["case_id"] != nil {
+			t.Fatalf("student %v without a case carries case %v", r["id"], r["case_id"])
+		}
+	}
+	if !linked {
+		t.Fatal("the student's row does not link to their case")
+	}
 	// A counsellor (staff.view, not staff.read) never sees a student profile.
 	for _, r := range allPages(t, "users_page", w.c1.Token, map[string]any{"q": "person"}, 50, uk) {
 		if r["role"] == "student" {
@@ -720,6 +737,45 @@ func TestRetentionPrefilterSurvivesMonthEnd(t *testing.T) {
 			if n := len(rowsOf(t, r.Body)); n != tc.want {
 				t.Errorf("at %s with {%s}: %d rows, want %d", tc.now, p, n, tc.want)
 			}
+		}
+	}
+}
+
+// The same rows in the same order as src/lib/queries.ts, the reference implementation: every
+// recorded query is paged through cases_page and compared id by id.
+func TestCasesPageMatchesTheReferenceOrder(t *testing.T) {
+	w := setupPaging(t)
+	if len(w.fx.Queries) == 0 {
+		t.Fatal("the fixture carries no queries; run npm run parity:update")
+	}
+	current := ""
+	for _, q := range w.fx.Queries {
+		if q.Config != current {
+			c := w.fx.Configs[q.Config]
+			system(t, func(ctx context.Context, ex db.Executor) error {
+				_, err := ex.Exec(ctx, "update public.org_config set config = $1::jsonb where id = 'org'", string(c))
+				return err
+			})
+			current = q.Config
+		}
+		p := map[string]any{"now": w.fx.Now}
+		for k, v := range q.P {
+			p[k] = v
+		}
+		rows := allPages(t, "cases_page", w.super.Token, p, 37, caseID)
+		got := make([]string, len(rows))
+		for i, r := range rows {
+			got[i] = caseID(r)
+		}
+		if strings.Join(got, ",") != strings.Join(q.IDs, ",") {
+			first := -1
+			for i := range got {
+				if i >= len(q.IDs) || got[i] != q.IDs[i] {
+					first = i
+					break
+				}
+			}
+			t.Errorf("%s %v: %d rows, reference %d; first difference at %d", q.Config, q.P, len(got), len(q.IDs), first)
 		}
 	}
 }

@@ -8,6 +8,8 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { Layer, Tooltip } from "@/lib/ui";
+import { SEARCH_MIN, useDebounced } from "@/lib/hooks";
+import { useCasePage } from "@/lib/useRead";
 import { filterCommands, type Command, type CommandGroup } from "./commands";
 
 export const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -21,13 +23,23 @@ export function SearchButton({ onOpen, buttonRef }: { onOpen: () => void; button
   );
 }
 
-export function CommandPalette({ open, onClose, commands, anchorRef }: { open: boolean; onClose: () => void; commands: Command[]; anchorRef?: React.RefObject<HTMLElement> }) {
+export function CommandPalette({ open, onClose, commands, anchorRef, searchCases = false, onOpenCase }: {
+  open: boolean; onClose: () => void; commands: Command[]; anchorRef?: React.RefObject<HTMLElement>;
+  /** Also search cases on the server (three characters or more). */
+  searchCases?: boolean; onOpenCase?: (caseId: string) => void;
+}) {
   const [q, setQ] = useState("");
   const [idx, setIdx] = useState(0);
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => { if (open) { setQ(""); setIdx(0); } }, [open]);
-  const results = useMemo(() => filterCommands(commands, q), [commands, q]);
+  const term = useDebounced(q.trim(), 200);
+  const found = useCasePage(open && searchCases && term.length >= SEARCH_MIN ? { q: term } : null, 8);
+  const caseCommands = useMemo<Command[]>(() => found.rows.map((r) => ({
+    id: `case:${r.id}`, group: "Cases", label: `${r.ref} · ${r.studentName}`, hint: `Stage ${r.stage} · ${r.destination}`,
+    keywords: `${r.ref} ${r.studentName} ${r.studentEmail} ${r.destination}`, run: () => onOpenCase?.(r.id),
+  })), [found.rows, onOpenCase]);
+  const results = useMemo(() => filterCommands([...commands, ...caseCommands], q), [commands, caseCommands, q]);
   useEffect(() => { setIdx(0); }, [q]);
 
   const run = (c: Command) => { onClose(); c.run(); };
@@ -62,7 +74,9 @@ export function CommandPalette({ open, onClose, commands, anchorRef }: { open: b
         <kbd className="palette-kbd" aria-hidden="true">esc</kbd>
       </div>
       <div className="palette-list" role="listbox" id={listId} aria-label="Results">
-        {results.length === 0 && <p className="palette-empty">No matches for “{q}”</p>}
+        {results.length === 0 && (found.loading
+          ? <p className="palette-empty" role="status">Searching cases…</p>
+          : <p className="palette-empty">No matches for “{q}”{searchCases && q.trim().length > 0 && q.trim().length < SEARCH_MIN ? ". Type three characters to search cases." : ""}</p>)}
         {results.map((c, i) => {
           const heading = c.group !== lastGroup ? c.group : null;
           lastGroup = c.group;

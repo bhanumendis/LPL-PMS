@@ -70,6 +70,7 @@ export interface CaseSummary {
   legalHold: boolean;
   lastEventAt: string | null;
   lastEventBy: string | null;
+  lastEventText: string | null;
   destination: string;
   channel: string;
   exitCode: string | null;
@@ -83,6 +84,8 @@ export interface CaseSummary {
   consentYes: boolean;
   transfersTotal: number;
   transfersUnsafeguarded: number;
+  /** Transfers to a partner agent that was not on the approved list (discrepancy D-05). */
+  transfersUnapproved: number;
 }
 
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
@@ -93,7 +96,7 @@ const isDone = (c: CaseRecord, n: number) => stepState(c, n).status === "done";
  * impossible calendar date ("2027-02-30") is null rather than rolled over into March the way a
  * JavaScript Date would (public.lpl_ts refuses it too).
  */
-function instant(v: unknown): string | null {
+export function instant(v: unknown): string | null {
   const s = str(v);
   if (!s) return null;
   const t = new Date(s).getTime();
@@ -150,7 +153,7 @@ export function summarizeCase(c: CaseRecord): CaseSummary {
     holdReviewAt: instant(c.hold?.reviewDate),
     ...retention,
     disposed: !!c.disposal, legalHold: !!c.legalHold,
-    lastEventAt: instant(c.events[0]?.at), lastEventBy: c.events[0]?.by ?? null,
+    lastEventAt: instant(c.events[0]?.at), lastEventBy: c.events[0]?.by ?? null, lastEventText: str(c.events[0]?.text),
     destination: destinationOf(c),
     channel: str(stepState(c, 1).values.source) ?? "Unknown",
     exitCode: c.status === "exited" ? c.exit?.code ?? "Other" : null,
@@ -162,6 +165,7 @@ export function summarizeCase(c: CaseRecord): CaseSummary {
     consentYes: s2.values?.consent === "Yes",
     transfersTotal: transfers.length,
     transfersUnsafeguarded: transfers.filter((t) => t.safeguard === "None recorded").length,
+    transfersUnapproved: transfers.filter((t) => t.recipientApproved === false).length,
   };
 }
 
@@ -245,7 +249,8 @@ export interface CountRow { label: string; n: number }
 export interface DashboardSummary {
   total: number;
   status: Record<CaseStatus, number>;
-  open: { total: number; unassigned: number; breached: number; dueSoon: number; gatesPending: number; gatesReturned: number; docsToReview: number; profileSubmitted: number };
+  /** progressPct: the mean progress of the open cases, rounded. */
+  open: { total: number; unassigned: number; progressPct: number; breached: number; dueSoon: number; gatesPending: number; gatesReturned: number; docsToReview: number; profileSubmitted: number };
   retention: Record<RetentionState, number>;
   byStage: { stage: number; open: number; bad: number }[];
   counsellors: { id: string; open: number; gates: number; docs: number; bad: number }[];
@@ -259,7 +264,7 @@ export interface DashboardSummary {
   exits: CountRow[];
   docs: { uploaded: number; accepted: number; rejected: number; reworkPct: number };
   leadDays: number | null;
-  compliance: { consentCovered: number; consentTotal: number; consentPct: number; transfers: number; unsafeguarded: number };
+  compliance: { consentCovered: number; consentTotal: number; consentPct: number; transfers: number; unsafeguarded: number; unapproved: number };
   /** The heads of the home-screen queues, ids only: what needs someone (worst first, then most
    *  recently updated), and cases with a breached clock (most overdue first). At most 25 each. */
   attention: string[];
@@ -283,7 +288,8 @@ const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1
 export function dashboardOf(summaries: CaseSummary[], config: OrgConfig, now: number = Date.now()): DashboardSummary {
   const status: Record<CaseStatus, number> = { open: 0, hold: 0, deferred: 0, exited: 0, completed: 0 };
   const retention: Record<RetentionState, number> = { none: 0, scheduled: 0, due_soon: 0, overdue: 0, held: 0, disposed: 0 };
-  const open = { total: 0, unassigned: 0, breached: 0, dueSoon: 0, gatesPending: 0, gatesReturned: 0, docsToReview: 0, profileSubmitted: 0 };
+  const open = { total: 0, unassigned: 0, progressPct: 0, breached: 0, dueSoon: 0, gatesPending: 0, gatesReturned: 0, docsToReview: 0, profileSubmitted: 0 };
+  let progressSum = 0;
   const byStage = PIPELINE.map((p) => ({ stage: p.n, open: 0, bad: 0 }));
   const couns = new Map<string, { id: string; open: number; gates: number; docs: number; bad: number }>();
   const dest = new Map<string, number>(), chan = new Map<string, number>(), exits = new Map<string, number>();
@@ -294,7 +300,7 @@ export function dashboardOf(summaries: CaseSummary[], config: OrgConfig, now: nu
   let granted = 0, arrived = 0, last30 = 0, prev30 = 0;
   let cisMet = 0, cisTotal = 0, offerMet = 0, offerTotal = 0, fuMet = 0, fuTotal = 0;
   let uploaded = 0, accepted = 0, rejected = 0, leadSum = 0, leadN = 0;
-  let consentCovered = 0, consentTotal = 0, transfers = 0, unsafeguarded = 0;
+  let consentCovered = 0, consentTotal = 0, transfers = 0, unsafeguarded = 0, unapproved = 0;
   const flagged: { id: string; rank: number; at: number }[] = [];
   const breachedCases: { id: string; days: number }[] = [];
 
@@ -307,6 +313,7 @@ export function dashboardOf(summaries: CaseSummary[], config: OrgConfig, now: nu
     if (s.status === "open") {
       open.total++;
       if (!s.counsellorId) open.unassigned++;
+      progressSum += s.progressPct;
       open.breached += st.breached;
       open.dueSoon += st.dueSoon;
       if (st.gatePending) open.gatesPending++;
@@ -354,9 +361,10 @@ export function dashboardOf(summaries: CaseSummary[], config: OrgConfig, now: nu
     }
     uploaded += s.docsUploaded; accepted += s.docsAccepted; rejected += s.docsRejected;
     if (s.profileStarted) { consentTotal++; if (s.consentYes) consentCovered++; }
-    transfers += s.transfersTotal; unsafeguarded += s.transfersUnsafeguarded;
+    transfers += s.transfersTotal; unsafeguarded += s.transfersUnsafeguarded; unapproved += s.transfersUnapproved;
   }
   const reviewed = accepted + rejected;
+  open.progressPct = open.total ? Math.round(progressSum / open.total) : 0;
   return {
     total: summaries.length, status, open, retention, byStage,
     counsellors: [...couns.values()].sort((a, b) => b.open - a.open || byCodePoint(a.id, b.id)),
@@ -377,7 +385,7 @@ export function dashboardOf(summaries: CaseSummary[], config: OrgConfig, now: nu
     exits: countRows(exits),
     docs: { uploaded, accepted, rejected, reworkPct: reviewed ? Math.round((rejected * 100) / reviewed) : 0 },
     leadDays: leadN ? Math.round(leadSum / leadN) : null,
-    compliance: { consentCovered, consentTotal, consentPct: consentTotal ? Math.round((consentCovered * 100) / consentTotal) : 100, transfers, unsafeguarded },
+    compliance: { consentCovered, consentTotal, consentPct: consentTotal ? Math.round((consentCovered * 100) / consentTotal) : 100, transfers, unsafeguarded, unapproved },
     attention: flagged.sort((a, b) => a.rank - b.rank || b.at - a.at || byCodePoint(a.id, b.id)).slice(0, QUEUE_HEAD).map((x) => x.id),
     urgent: breachedCases.sort((a, b) => a.days - b.days || byCodePoint(a.id, b.id)).slice(0, QUEUE_HEAD).map((x) => x.id),
   };

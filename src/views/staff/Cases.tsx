@@ -2,18 +2,23 @@
  * Lyceum Placements — Placement Management System
  * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
  * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ *
+ * The case list. The server filters, orders and pages it; the browser never holds more than
+ * the rows on screen.
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { Search, UserRoundPlus } from "lucide-react";
 import { useSession } from "@/App";
 import { store, uid, nowIso, hashPassword, passwordProblem } from "@/lib/store";
-import { canReadCase, caseScopeOf } from "@/lib/rbac";
+import { caseScopeOf } from "@/lib/rbac";
 import { PIPELINE, STEP_BY_N, DESTINATIONS } from "@/lib/spine";
-import { currentPipeline, slaFlags, latestGate, fmtDateTime, newCaseRef, mkEvent, todayInput, pendingReviewCount, caseDestination, daysSince } from "@/lib/logic";
-import { useCaseSignals, type CaseSignals } from "@/lib/signals";
-import { BP, useMediaQuery } from "@/lib/hooks";
-import { Pill, statusTone, STATUS_LABEL, Modal, Notice, useToast, EmptyState, Avatar, TextField, SelectField, TextArea, PageHeader, FilterBar, CardList, MiniStageTrack, SeverityChip } from "@/lib/ui";
-import type { CaseRecord, User } from "@/lib/types";
+import { fmtDateTime, newCaseRef, mkEvent, todayInput, daysSince } from "@/lib/logic";
+import { useRowSignals, type CaseSignals } from "@/lib/signals";
+import { BP, SEARCH_MIN, useDebounced, useMediaQuery } from "@/lib/hooks";
+import { useCaseCount, useCasePage, useDashboard } from "@/lib/useRead";
+import type { CaseFilter } from "@/lib/queries";
+import { Pill, statusTone, STATUS_LABEL, Modal, Notice, useToast, EmptyState, Avatar, TextField, SelectField, TextArea, PageHeader, FilterBar, CardList, MiniStageTrack, SeverityChip, ListSkeleton, ReadError, PageFooter } from "@/lib/ui";
+import type { CaseRecord, CaseStatus, User } from "@/lib/types";
 import { EVENTS } from "@/lib/audit";
 
 /** The case's most urgent attention label as one chip, with a count of the rest. */
@@ -32,22 +37,23 @@ function AttentionChips({ s }: { s?: CaseSignals }) {
 const NOT_DEPLOYED_HINT = "Deploy the admin-users function (supabase/functions/admin-users) to issue sign-ins from here.";
 
 export function CasesPage() {
-  const { cases, users, snap, user, can, go, route } = useSession();
+  const { users, snap, user, can, go, route } = useSession();
   const config = snap.org.config;
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
-  // Deep links: #/cases/stage:{id} presets the stage filter; #/cases/new opens the create dialog.
+  // Deep links: #/cases/stage:{id} presets the stage filter; #/cases/attention the attention
+  // filter; #/cases/new opens the create dialog.
   const [stage, setStage] = useState(route.id?.startsWith("stage:") ? route.id.slice(6) : "");
   const [owner, setOwner] = useState("");
-  const [attention, setAttention] = useState(false);
-  const [assignFor, setAssignFor] = useState<CaseRecord | null>(null);
+  const [attention, setAttention] = useState(route.id === "attention");
+  const [assignFor, setAssignFor] = useState<AssignTarget | null>(null);
   const [creating, setCreating] = useState(route.id === "new");
   // A deep link that arrives while the page is already mounted (dashboard stage flow, palette) still applies.
   useEffect(() => {
     if (route.id?.startsWith("stage:")) setStage(route.id.slice(6));
     if (route.id === "new") setCreating(true);
+    if (route.id === "attention") setAttention(true);
   }, [route.id]);
-  const signals = useCaseSignals();
   const phone = useMediaQuery(BP.mobile);
 
   const scope = caseScopeOf(config, user!.role);
@@ -55,59 +61,71 @@ export function CasesPage() {
   const canCreate = can("case.write") && (scope === "all" || scope === "assigned");
   const canAssign = can("assignment.write");
 
-  const visible = useMemo(() => Object.values(cases).filter((c) => canReadCase(config, user, c)), [cases, config, user]);
-  const list = visible.filter((c) => {
-    if (status ? c.status !== status : false) return false;
-    if (stage && currentPipeline(c).id !== stage) return false;
-    if (owner === "unassigned" ? !!c.counsellorId : owner ? c.counsellorId !== owner : false) return false;
-    if (attention) {
-      const flags = slaFlags(c, config).some((f) => f.state !== "ok");
-      const gate = ([16, 19] as const).some((g) => { const l = latestGate(c, g); return l?.status === "pending" || (l?.status === "returned" && !l.addressedAt); });
-      if (!flags && !gate && !pendingReviewCount(c)) return false;
-    }
-    if (q) { const s = q.toLowerCase(); if (!c.ref.toLowerCase().includes(s) && !c.student.name.toLowerCase().includes(s) && !c.student.email.toLowerCase().includes(s) && !caseDestination(c).toLowerCase().includes(s)) return false; }
-    return true;
-  }).sort((a, b) => (a.status === "open" ? 0 : 1) - (b.status === "open" ? 0 : 1) || b.updatedAt.localeCompare(a.updatedAt));
+  // The server filters, orders (open cases first, then most recently updated) and pages; the
+  // browser holds one page at a time.
+  const term = useDebounced(q.trim(), 250);
+  const searching = term.length >= SEARCH_MIN;
+  const stageN = PIPELINE.find((p) => p.id === stage)?.n;
+  const filter = useMemo<CaseFilter>(() => ({
+    ...(searching ? { q: term } : {}),
+    ...(status ? { status: [status as CaseStatus] } : {}),
+    ...(stageN ? { stage: stageN } : {}),
+    ...(owner ? { counsellor: owner === "unassigned" ? "none" : owner } : {}),
+    ...(attention ? { attention: true } : {}),
+  }), [searching, term, status, stageN, owner, attention]);
+  const filtered = Object.keys(filter).length > 0;
+  const page = useCasePage(filter);
+  const matching = useCaseCount(filtered ? filter : null);
+  const dashboard = useDashboard();
+  const total = dashboard.data?.total ?? null;
+  const signals = useRowSignals(page.rows);
 
   const counsellors = Object.values(users).filter((u) => (u.role === "counsellor" || u.role === "team_leader") && u.active);
   const searchId = React.useId();
+  const shownOf = filtered ? matching.data : total;
+  const context = page.loading ? "Loading…"
+    : `${(shownOf ?? page.rows.length).toLocaleString()}${shownOf != null && shownOf >= 10_000 ? "+" : ""} ${filtered ? "matching" : `case${total === 1 ? "" : "s"}`}${attention ? " needing attention" : ""}`;
 
   return (
     <div className="stack">
       <PageHeader
         title={all ? "Cases" : "My caseload"}
-        context={<>{list.length} of {visible.length} case{visible.length === 1 ? "" : "s"}{attention ? " needing attention" : ""}</>}
+        context={<span aria-live="polite">{context}</span>}
         actions={canCreate ? <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}><UserRoundPlus aria-hidden />Create student</button> : undefined}
       />
 
       <FilterBar label="Filter cases">
         <div className={`filters ${all ? "cols-3" : "cols-2"}`}>
-          <div className="input-wrap f-search"><Search aria-hidden /><label htmlFor={searchId} className="sr-only">Search cases</label><input id={searchId} className="input" placeholder="Search reference, name, email or destination" value={q} onChange={(e) => setQ(e.target.value)} type="search" /></div>
+          <div className="input-wrap f-search"><Search aria-hidden /><label htmlFor={searchId} className="sr-only">Search cases</label><input id={searchId} className="input" placeholder="Search reference, name, email or destination" value={q} onChange={(e) => setQ(e.target.value)} type="search" aria-describedby={`${searchId}-hint`} /></div>
           <div><label className="sr-only" htmlFor={`${searchId}-st`}>Status</label><select id={`${searchId}-st`} className="input" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All statuses</option>{Object.entries(STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
           <div><label className="sr-only" htmlFor={`${searchId}-sg`}>Stage</label><select id={`${searchId}-sg`} className="input" value={stage} onChange={(e) => setStage(e.target.value)}><option value="">All stages</option>{PIPELINE.map((p) => <option key={p.id} value={p.id}>{p.n}. {p.name}</option>)}</select></div>
           {all && <div><label className="sr-only" htmlFor={`${searchId}-ow`}>Counsellor</label><select id={`${searchId}-ow`} className="input" value={owner} onChange={(e) => setOwner(e.target.value)}><option value="">All counsellors</option><option value="unassigned">Unassigned</option>{counsellors.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>}
           <button type="button" className={`btn btn-secondary ${attention ? "on" : ""}`} aria-pressed={attention} onClick={() => setAttention((v) => !v)}>Needs attention</button>
         </div>
+        <p id={`${searchId}-hint`} className={`xs muted ${q.trim() && !searching ? "" : "sr-only"}`}>Type at least three characters to search.</p>
       </FilterBar>
 
-      {list.length === 0 ? (
-        <EmptyState glyph={visible.length === 0 ? "cases" : "search"} title={visible.length === 0 ? (all ? "No cases yet" : "No cases assigned to you") : "No cases match these filters"} reason={visible.length === 0 ? (all ? "Create the first student case here." : "Cases appear here once an administrator or Team Leader assigns them to you.") : "Clear a filter or search for a different reference."} action={visible.length === 0 && canCreate ? <button type="button" className="btn btn-primary btn-sm" onClick={() => setCreating(true)}><UserRoundPlus aria-hidden />Create student</button> : undefined} />
-      ) : phone ? (
+      {page.error ? <ReadError error={page.error} onRetry={page.reload} />
+        : page.loading ? <ListSkeleton label="Loading cases" />
+        : page.rows.length === 0 ? (
+          <EmptyState glyph={filtered ? "search" : "cases"} title={!filtered ? (all ? "No cases yet" : "No cases assigned to you") : "No cases match these filters"} reason={!filtered ? (all ? "Create the first student case here." : "Cases appear here once an administrator or Team Leader assigns them to you.") : "Clear a filter or search for a different reference."} action={!filtered && canCreate ? <button type="button" className="btn btn-primary btn-sm" onClick={() => setCreating(true)}><UserRoundPlus aria-hidden />Create student</button> : undefined} />
+        ) : phone ? (
         <CardList
-          items={list}
+          items={page.rows}
           keyOf={(c) => c.id}
           label={all ? "Cases" : "My caseload"}
           render={(c) => {
             const s = signals.get(c.id);
             const ownerU = c.counsellorId ? users[c.counsellorId] : undefined;
+            const pl = PIPELINE[c.stage - 1] ?? PIPELINE[PIPELINE.length - 1];
             return (
               <div className="case-card">
                 <div className="flex aic jcb g2">
                   <button type="button" className="row-btn ui strong" onClick={() => go({ page: "case", caseId: c.id })}>{c.ref}</button>
                   <Pill tone={statusTone(c.status)}>{STATUS_LABEL[c.status]}</Pill>
                 </div>
-                <p className="ui small strong truncate">{c.student.name}</p>
-                <p className="xs muted">Stage {currentPipeline(c).n} of 9 · {currentPipeline(c).name}{ownerU ? ` · ${ownerU.name}` : ""}</p>
+                <p className="ui small strong truncate">{c.studentName}</p>
+                <p className="xs muted">Stage {pl.n} of 9 · {pl.name}{ownerU ? ` · ${ownerU.name}` : ""}</p>
                 {s && <MiniStageTrack stages={s.stages} size="xs" />}
                 <div className="flex aic wrap g2">
                   <AttentionChips s={s} />
@@ -118,31 +136,31 @@ export function CasesPage() {
           }}
         />
       ) : (
-        <div className="panel table-wrap">
+        <div className="panel table-wrap" aria-busy={page.refreshing}>
           <table className="tbl" style={{ minWidth: 1180 }}>
             <thead>
               <tr><th scope="col" style={{ minWidth: 140 }}>Reference</th><th scope="col" style={{ minWidth: 200 }}>Student</th><th scope="col">Destination</th><th scope="col" style={{ minWidth: 220 }}>Current step</th><th scope="col">Progress</th><th scope="col" style={{ minWidth: 170 }}>Counsellor</th><th scope="col">Status</th><th scope="col">Attention</th><th scope="col">Updated</th></tr>
             </thead>
             <tbody>
-              {list.map((c) => {
+              {page.rows.map((c) => {
                 const s = signals.get(c.id);
-                const n = s?.currentStep ?? null;
-                const pl = s?.stage ?? currentPipeline(c);
+                const n = c.currentStep;
+                const pl = PIPELINE[c.stage - 1] ?? PIPELINE[PIPELINE.length - 1];
                 const ownerU = c.counsellorId ? users[c.counsellorId] : undefined;
                 const open = () => go({ page: "case", caseId: c.id });
                 return (
                   <tr key={c.id} className="row-link" onClick={open}>
-                    <td><button type="button" className="row-btn" onClick={(e) => { e.stopPropagation(); open(); }}>{c.ref}</button><p className="sub">{daysSince(c.createdAt)}d old</p></td>
-                    <td><p className="primary">{c.student.name}</p><p className="sub">{c.student.email}</p></td>
-                    <td>{caseDestination(c)}</td>
+                    <td><button type="button" className="row-btn" onClick={(e) => { e.stopPropagation(); open(); }}>{c.ref}</button>{c.createdAt && <p className="sub">{daysSince(c.createdAt)}d old</p>}</td>
+                    <td><p className="primary">{c.studentName}</p><p className="sub">{c.studentEmail}</p></td>
+                    <td>{c.destination}</td>
                     <td>{n ? <><p>{n}. {STEP_BY_N[n].title}</p><p className="sub">Stage {pl.n} of 9 · {pl.name}</p></> : <span className="muted">All steps complete</span>}</td>
-                    <td className="progress-cell">{s && <><div className="flex aic g2"><MiniStageTrack stages={s.stages} label={`${c.ref}: stage ${pl.n} of 9, ${s.progress.pct}% of steps recorded`} /><span className="ui xs tnum">{s.progress.pct}%</span></div><p className="sub">{s.progress.done} of {s.progress.applicable} steps recorded</p></>}</td>
+                    <td className="progress-cell">{s && <><div className="flex aic g2"><MiniStageTrack stages={s.stages} label={`${c.ref}: stage ${pl.n} of 9, ${c.progressPct}% of steps recorded`} /><span className="ui xs tnum">{c.progressPct}%</span></div><p className="sub">{c.progressDone} of {c.progressApplicable} steps recorded</p></>}</td>
                     <td onClick={(e) => e.stopPropagation()}>
                       {ownerU ? <span className="flex aic g2"><Avatar name={ownerU.name} size={26} />{ownerU.name}</span> : canAssign && c.status === "open" ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAssignFor(c)}><UserRoundPlus aria-hidden />Assign</button> : <span className="muted">Unassigned</span>}
                     </td>
                     <td><Pill tone={statusTone(c.status)}>{STATUS_LABEL[c.status]}</Pill></td>
                     <td><AttentionChips s={s} /></td>
-                    <td className="muted nowrap">{fmtDateTime(c.updatedAt)}</td>
+                    <td className="muted nowrap">{c.updatedAt ? fmtDateTime(c.updatedAt) : "—"}</td>
                   </tr>
                 );
               })}
@@ -150,6 +168,7 @@ export function CasesPage() {
           </table>
         </div>
       )}
+      {!page.loading && !page.error && <PageFooter shown={page.rows.length} total={shownOf} hasMore={page.hasMore} loadingMore={page.loadingMore} onMore={page.loadMore} noun="cases" />}
 
       {assignFor && <AssignDialog c={assignFor} onClose={() => setAssignFor(null)} />}
       {creating && <CreateStudentDialog onClose={() => setCreating(false)} />}
@@ -157,40 +176,49 @@ export function CasesPage() {
   );
 }
 
-export function AssignDialog({ c, onClose }: { c: CaseRecord; onClose: () => void }) {
-  const { users, user, audit, cases } = useSession();
+/** What assigning needs to know about a case: a list row or the document itself. */
+export interface AssignTarget { id: string; ref: string; counsellorId?: string | null; studentName?: string; studentEmail?: string; student?: { name: string; email: string } }
+
+export function AssignDialog({ c, onClose }: { c: AssignTarget; onClose: () => void }) {
+  const { users, user, audit } = useSession();
   const toast = useToast();
   const counsellors = Object.values(users).filter((u) => (u.role === "counsellor" || u.role === "team_leader") && u.active);
+  // Open caseloads come from the dashboard (the shared answer for roles that see every case).
+  const dashboard = useDashboard();
+  const load = useMemo(() => new Map((dashboard.data?.counsellors ?? []).map((x) => [x.id, x.open])), [dashboard.data]);
   const [pick, setPick] = useState(c.counsellorId ?? "");
   const [busy, setBusy] = useState(false);
+  const name = c.student?.name ?? c.studentName ?? "";
+  const email = c.student?.email ?? c.studentEmail ?? "";
   const submit = async () => {
     if (!pick || !user) return;
     setBusy(true);
     const target = users[pick];
+    let previous: string | undefined;
     try {
     await store.mutateCase(c.id, (x) => {
-      const prev = x.counsellorId ? users[x.counsellorId]?.name : undefined;
+      previous = x.counsellorId ? users[x.counsellorId]?.name ?? "previous counsellor" : undefined;
       x.counsellorId = pick; x.assignedAt = nowIso(); x.assignedBy = user.id;
-      x.events.unshift(mkEvent(user, "assign", prev ? `Reassigned from ${prev} to ${target.name}` : `Assigned to ${target.name}`, 1));
+      x.events.unshift(mkEvent(user, "assign", previous ? `Reassigned from ${previous} to ${target.name}` : `Assigned to ${target.name}`, 1));
       return x;
     });
-    await audit(EVENTS.caseAssigned(c, target.name, c.counsellorId ? users[c.counsellorId]?.name ?? "previous counsellor" : undefined));
+    await audit(EVENTS.caseAssigned(c, target.name, previous));
     toast(`${c.ref} assigned to ${target.name}`);
     onClose();
     } catch { /* reported by the store */ } finally { setBusy(false); }
   };
   return (
     <Modal open onClose={onClose} title={`${c.counsellorId ? "Reassign" : "Assign"} ${c.ref}`}>
-      <p className="muted mb3">{c.student.name} · {c.student.email}</p>
+      <p className="muted mb3">{name} · {email}</p>
       {counsellors.length === 0 ? <Notice tone="warn">No active counsellors. Create a counsellor profile under Staff first.</Notice> : (
         <div className="stack-sm" role="radiogroup" aria-label="Counsellor">
           {counsellors.map((u) => {
-            const load = Object.values(cases).filter((x) => x.counsellorId === u.id && x.status === "open").length;
+            const open = load.get(u.id);
             return (
               <label key={u.id} className="check" style={{ borderColor: pick === u.id ? "var(--accent-text)" : undefined, background: pick === u.id ? "var(--accent-soft)" : undefined }}>
                 <input type="radio" name="counsellor" checked={pick === u.id} onChange={() => setPick(u.id)} />
                 <Avatar name={u.name} size={30} />
-                <span className="grow"><span className="ui strong" style={{ display: "block" }}>{u.name}</span><span className="xs muted">{u.role === "team_leader" ? "Team Leader" : "Counsellor"}{u.branch ? ` · ${u.branch}` : ""} · {load} open</span></span>
+                <span className="grow"><span className="ui strong" style={{ display: "block" }}>{u.name}</span><span className="xs muted">{u.role === "team_leader" ? "Team Leader" : "Counsellor"}{u.branch ? ` · ${u.branch}` : ""}{open != null ? ` · ${open} open` : dashboard.data ? " · 0 open" : ""}</span></span>
               </label>
             );
           })}
@@ -231,8 +259,7 @@ function CreateStudentDialog({ onClose }: { onClose: () => void }) {
     if (issue) { const problem = passwordProblem(f.password); if (problem) return setErr(problem); }
     setBusy(true);
     try {
-    await store.refresh();
-    if (issue && store.findUserByEmail(f.email)) { setBusy(false); return setErr("A profile with this email already exists."); }
+    if (issue && await store.emailTaken(f.email)) { setBusy(false); return setErr("A profile with this email already exists."); }
     const server = store.server;
     const email = f.email.trim().toLowerCase();
     const name = f.name.trim();
@@ -263,7 +290,7 @@ function CreateStudentDialog({ onClose }: { onClose: () => void }) {
       events: [mkEvent(user, "create", `Enquiry received via ${f.source}. Case opened by ${user.name}.`, 1), ...(f.counsellorId ? [mkEvent(user, "assign", `Assigned to ${users[f.counsellorId]?.name}`, 1)] : [])],
       createdAt: nowIso(), updatedAt: nowIso(), rev: 1,
     };
-    await store.mutateCases((s) => { s.cases[c.id] = c; return s; });
+    await store.createCase(c);
     await audit(EVENTS.caseOpened(c, f.source));
     if (issue && studentId) {
       if (server) {

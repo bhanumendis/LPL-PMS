@@ -4,7 +4,7 @@
  * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
  */
 import { describe, expect, it } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "@/App";
 import { seedCases, signInAs } from "@/test/session";
 import { blankCase, ISO } from "@/test/fixtures";
@@ -46,12 +46,13 @@ describe("counsellor student rail", () => {
     expect(within(region).getByRole("button", { name: /Open current step/ })).toBeInTheDocument();
 
     const search = within(panel).getByRole("searchbox", { name: "Search students" });
+    // The search is debounced and answered by the read model, so the list updates a moment later.
     fireEvent.change(search, { target: { value: "nimal" } });
-    expect(within(panel).queryByRole("button", { name: /Open Sithmi/ })).toBeNull();
+    await waitFor(() => expect(within(panel).queryByRole("button", { name: /Open Sithmi/ })).toBeNull());
     expect(within(panel).getByRole("button", { name: /Open Nimal Perera/ })).toBeInTheDocument();
     fireEvent.change(search, { target: { value: "" } });
 
-    fireEvent.click(within(panel).getByRole("button", { name: /Open Sithmi Jayasinghe/ }));
+    fireEvent.click(await within(panel).findByRole("button", { name: /Open Sithmi Jayasinghe/ }));
     expect(window.location.hash).toBe("#/case/c2");
     expect(await screen.findByRole("heading", { name: "Sithmi Jayasinghe" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "My students" })).toBeNull();

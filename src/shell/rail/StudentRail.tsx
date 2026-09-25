@@ -7,16 +7,20 @@
  * progress ring per assigned student. Pressing the launcher (or any ring) slides the full
  * quick view open from the left — every student with their percentage, stage and step.
  * On phones the same list opens as a bottom sheet from the Students tab.
+ *
+ * The list is read from the server a page at a time, worst first (severity, then most recently
+ * updated); the summary figures come from the dashboard over the counsellor's own cases, and a
+ * student's quick view fetches their case document when it is expanded.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, PanelLeftClose, PanelLeftOpen, Search } from "lucide-react";
 import { useSession } from "@/App";
 import { caseScopeOf } from "@/lib/rbac";
-import { caseDestination } from "@/lib/logic";
-import { useLocalPref } from "@/lib/hooks";
-import { compareSeverity, useCaseSignals, type CaseSignals } from "@/lib/signals";
-import { EmptyState, Layer, Tooltip, useFocusTrap } from "@/lib/ui";
+import { SEARCH_MIN, useDebounced, useLocalPref } from "@/lib/hooks";
+import { useRowSignals, type CaseSignals } from "@/lib/signals";
+import { useCase, useCaseCount, useCasePage, useDashboard } from "@/lib/useRead";
+import { EmptyState, Layer, ListSkeleton, PageFooter, ReadError, Tooltip, useFocusTrap } from "@/lib/ui";
 import type { OrgConfig, User } from "@/lib/types";
 import { ProgressAvatar, RailRow, stepLine } from "./RailRow";
 import { useFlip } from "@/lib/motion";
@@ -53,22 +57,26 @@ export interface StudentRailProps {
 
 export function StudentRail({ mode, open, onOpenChange }: StudentRailProps) {
   const { user, cases, go } = useSession();
-  const signals = useCaseSignals();
   const seen = useSeen(user?.id);
   const [q, setQ] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [openGroups, setOpenGroups] = useLocalPref<Record<GroupId, boolean>>("lpl:pms:rail-groups", { attention: true, progress: true, held: false, closed: false });
   const launcherRef = useRef<HTMLButtonElement>(null);
 
-  const assigned = useMemo(() => (user ? [...signals.values()].filter((x) => x.counsellorId === user.id).sort(compareSeverity) : []), [signals, user]);
-  const mine = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return assigned;
-    return assigned.filter((x) => x.name.toLowerCase().includes(s) || x.ref.toLowerCase().includes(s) || (cases[x.id] ? caseDestination(cases[x.id]).toLowerCase().includes(s) : false));
-  }, [assigned, q, cases]);
-  const active = assigned.filter((x) => x.status === "open");
-  const attentionCount = active.filter((x) => x.severity !== "none").length;
-  const avg = active.length ? Math.round(active.reduce((n, x) => n + x.progress.pct, 0) / active.length) : 0;
+  const dash = useDashboard(!!user);
+  const term = useDebounced(q.trim(), 250);
+  const searching = term.length >= SEARCH_MIN;
+  const page = useCasePage(user ? { sort: "severity", ...(searching ? { q: term } : {}) } : null);
+  const signals = useRowSignals(page.rows);
+  const rows = useMemo(() => page.rows.map((r) => signals.get(r.id)).filter((x): x is CaseSignals => !!x), [page.rows, signals]);
+  const assigned = searching ? [] : rows;
+  const mine = rows;
+  const flagged = useCaseCount(user ? { status: ["open"], attention: true } : null, 1000);
+  const total = dash.data?.total ?? rows.length;
+  const activeCount = dash.data?.open.total ?? rows.filter((x) => x.status === "open").length;
+  const attentionCount = flagged.data ?? 0;
+  const avg = dash.data?.open.progressPct ?? 0;
+  const detail = useCase(expanded ?? undefined, cases);
 
   const openCase = useCallback((s: CaseSignals, extra: { step?: number; tab?: string } = {}) => {
     if (user) markSeen(user.id, s.id, s.updatedAt);
@@ -96,23 +104,23 @@ export function StudentRail({ mode, open, onOpenChange }: StudentRailProps) {
   if (!user) return null;
 
   const preview = (s: CaseSignals) => {
-    const c = cases[s.id];
-    if (!c) return null;
+    const c = detail.c;
+    if (!c || c.id !== s.id) return detail.loading ? <ListSkeleton rows={1} label="Opening quick view" /> : null;
     return <StudentPreview s={s} c={c} onOpenStep={() => openCase(s, s.currentStep ? { step: s.currentStep } : {})} onOpenDocuments={() => openCase(s, { tab: "documents" })} onOpenTimeline={() => openCase(s, { tab: "timeline" })} />;
   };
 
   const panelBody = (
     <>
       <div className="rail-summary" role="group" aria-label="Caseload summary">
-        <div className="rail-sum hue-blue"><span className="rail-sum-v">{active.length}</span><span className="rail-sum-l">Active</span></div>
-        <div className="rail-sum hue-rose"><span className="rail-sum-v">{attentionCount}</span><span className="rail-sum-l">Need attention</span></div>
+        <div className="rail-sum hue-blue"><span className="rail-sum-v">{activeCount}</span><span className="rail-sum-l">Active</span></div>
+        <div className="rail-sum hue-rose"><span className="rail-sum-v">{attentionCount >= 1000 ? "1,000+" : attentionCount}</span><span className="rail-sum-l">Need attention</span></div>
         <div className="rail-sum hue-teal"><span className="rail-sum-v">{avg}%</span><span className="rail-sum-l">Average progress</span></div>
       </div>
       <div className="rail-search">
         <Search aria-hidden />
-        <input type="search" className="input" placeholder="Search students" aria-label="Search students" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input type="search" className="input" placeholder="Search students (three characters or more)" aria-label="Search students" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
-      {assigned.length === 0 ? (
+      {page.error ? <ReadError error={page.error} onRetry={page.reload} /> : page.loading ? <ListSkeleton rows={4} label="Loading your students" /> : !searching && total === 0 ? (
         <EmptyState compact glyph="students" title="No students assigned yet" reason="Cases appear here once an administrator or Team Leader assigns them to you." />
       ) : mine.length === 0 ? (
         <EmptyState compact glyph="search" title="No students match" reason="Try a different name, reference or destination." />
@@ -140,6 +148,7 @@ export function StudentRail({ mode, open, onOpenChange }: StudentRailProps) {
           );
         })
       )}
+      {!page.loading && !page.error && <PageFooter shown={rows.length} total={searching ? null : total} hasMore={page.hasMore} loadingMore={page.loadingMore} onMore={page.loadMore} noun="students" />}
     </>
   );
 
@@ -147,7 +156,7 @@ export function StudentRail({ mode, open, onOpenChange }: StudentRailProps) {
     <div className="rail-head">
       <div className="rail-title">
         <h2>My students</h2>
-        <p>{assigned.length} assigned to {user.name.split(/\s+/)[0]}</p>
+        <p>{total.toLocaleString()} assigned to {user.name.split(/\s+/)[0]}</p>
       </div>
       {close}
     </div>
@@ -166,7 +175,7 @@ export function StudentRail({ mode, open, onOpenChange }: StudentRailProps) {
       <aside className="rail strip" aria-label="My students">
         <Tooltip side="right" label={open ? "Close my students" : "My students"}>
           <button ref={launcherRef} type="button" className="rail-launch" aria-haspopup="dialog" aria-expanded={open}
-            aria-label={`${open ? "Close" : "Open"} my students, ${assigned.length} assigned${attentionCount ? `, ${attentionCount} needing attention` : ""}`}
+            aria-label={`${open ? "Close" : "Open"} my students, ${total} assigned${attentionCount ? `, ${attentionCount} needing attention` : ""}`}
             onClick={() => (open ? onOpenChange(false) : reveal())}>
             {open ? <PanelLeftClose aria-hidden /> : <PanelLeftOpen aria-hidden />}
             {attentionCount > 0 && <span className="badge" aria-hidden="true">{attentionCount}</span>}
@@ -184,7 +193,7 @@ export function StudentRail({ mode, open, onOpenChange }: StudentRailProps) {
             </li>
           ))}
         </ul>
-        {assigned.length > STRIP_MAX && <button type="button" className="rail-more" onClick={() => reveal()} aria-label={`Show all ${assigned.length} students`}>+{assigned.length - STRIP_MAX}</button>}
+        {total > STRIP_MAX && <button type="button" className="rail-more" onClick={() => reveal()} aria-label={`Show all ${total} students`}>+{total - STRIP_MAX}</button>}
       </aside>
       {open && (
         <SlideOver onClose={() => onOpenChange(false)}>

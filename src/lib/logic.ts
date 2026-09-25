@@ -5,7 +5,8 @@
  */
 import type { CaseEvent, CaseRecord, DocItem, GateSubmission, OrgConfig, RetentionPolicy, StepState, TransferRecord, User } from "./types";
 import { EXIT_CODES, ORDERED_STEP_NUMBERS, PIPELINE, PLATFORM_COUNTRY, RETAINED_FIELDS, STEP_BY_N, TRANSFER_STEPS, pipelineOfStep, type PipelineStage } from "./spine";
-import { DEFAULT_RETENTION, nowIso, uid } from "./store";
+import { DEFAULT_RETENTION } from "./defaults";
+import { nowIso, uid } from "./ids";
 
 // ---------- dates ----------
 
@@ -484,6 +485,12 @@ export const ORG_TIME_ZONE = "Asia/Colombo";
 const MONTH_FMT = new Intl.DateTimeFormat("en-CA", { timeZone: ORG_TIME_ZONE, year: "numeric", month: "2-digit" });
 
 export function monthKey(d: Date): string { return MONTH_FMT.format(d).slice(0, 7); }
+
+/** "2026-09" → "Sep". */
+export function monthLabel(key: string): string {
+  const [y, m] = key.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 15)).toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" });
+}
 
 export function lastMonths(n: number, now: number = Date.now()): { key: string; label: string }[] {
   const out: { key: string; label: string }[] = [];

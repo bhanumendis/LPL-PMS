@@ -78,6 +78,8 @@ export function generateCases(n: number, seed: number, now: number): CaseRecord[
     const transfers: TransferRecord[] = Array.from({ length: Math.floor(r() * 3) }, (_, t) => ({
       id: `${id}-t${t}`, at: iso(created), by: "u1", byName: "U", step: 11, recipient: "Uni", recipientType: "university", country: "Australia",
       dataCategories: [], lawfulBasis: "x", safeguard: chance(0.5) ? "None recorded" : "Processor agreement",
+      // From the indices, not the generator, so adding it moved no other draw.
+      ...((i + t) % 3 === 0 ? { recipientType: "partner_agent" as const, recipientApproved: (i + t) % 2 === 0 } : {}),
     }));
     const status: CaseStatus = pick(["open", "open", "open", "hold", "deferred", "exited", "completed"]);
     const updated = Math.max(created, around(120));

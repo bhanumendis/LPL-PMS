@@ -10,3 +10,7 @@ supabase/.temp/
 supabase/.branches/
 *.log
 npm-debug.log*
+
+# client end-to-end harness (scripts/e2e-api.sh)
+.e2e-lpl-api
+.e2e-lpl-api.log

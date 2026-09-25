@@ -8,11 +8,11 @@
 import { memo, type CSSProperties } from "react";
 import { PIPELINE } from "@/lib/spine";
 import { useMounted } from "@/lib/charts";
-import type { CaseSignals } from "@/lib/signals";
+import type { DashboardSummary } from "@/lib/summary";
 
-export const StageFlow = memo(function StageFlow({ signals, onSelect, selected, label = "Open cases by stage" }: { signals: CaseSignals[]; onSelect?: (stageId: string) => void; selected?: string; label?: string }) {
+export const StageFlow = memo(function StageFlow({ byStage, onSelect, selected, label = "Open cases by stage" }: { byStage: DashboardSummary["byStage"]; onSelect?: (stageId: string) => void; selected?: string; label?: string }) {
   const mounted = useMounted();
-  const counts = PIPELINE.map((p) => ({ p, n: signals.filter((s) => s.status === "open" && s.stage.id === p.id).length, bad: signals.filter((s) => s.status === "open" && s.stage.id === p.id && s.severity === "bad").length }));
+  const counts = PIPELINE.map((p) => { const x = byStage.find((b) => b.stage === p.n); return { p, n: x?.open ?? 0, bad: x?.bad ?? 0 }; });
   const max = Math.max(1, ...counts.map((c) => c.n));
   const total = counts.reduce((s, c) => s + c.n, 0);
   return (

@@ -136,6 +136,7 @@ alter table public.cases
   add column if not exists legal_hold              boolean,
   add column if not exists last_event_at           timestamptz,
   add column if not exists last_event_by           text,
+  add column if not exists last_event_text         text,
   add column if not exists destination             text,
   add column if not exists channel                 text,
   add column if not exists exit_code               text,
@@ -147,6 +148,7 @@ alter table public.cases
   add column if not exists consent_yes             boolean,
   add column if not exists transfers_total         integer,
   add column if not exists transfers_unsafeguarded integer,
+  add column if not exists transfers_unapproved    integer,
   -- Index-only helpers (not part of the summary contract): a clock is running; the case may
   -- need someone (a clock, a gate, documents or a profile to review); the searchable text.
   add column if not exists has_clock               boolean,
@@ -232,6 +234,7 @@ begin
   c.legal_hold := coalesce(jsonb_typeof(d -> 'legalHold'), 'null') <> 'null';
   c.last_event_at := public.lpl_ts(public.lpl_str(d -> 'events' -> 0 -> 'at'));
   c.last_event_by := d -> 'events' -> 0 ->> 'by';
+  c.last_event_text := public.lpl_str(d -> 'events' -> 0 -> 'text');
 
   c.destination := coalesce(
     public.lpl_str(s14 -> 'values' -> 'country'),
@@ -250,6 +253,7 @@ begin
   c.consent_yes := coalesce(jsonb_typeof(s2 -> 'values' -> 'consent') = 'string' and s2 -> 'values' ->> 'consent' = 'Yes', false);
   c.transfers_total := jsonb_array_length(trs);
   c.transfers_unsafeguarded := (select count(*) from jsonb_array_elements(trs) e where e ->> 'safeguard' = 'None recorded');
+  c.transfers_unapproved := (select count(*) from jsonb_array_elements(trs) e where e -> 'recipientApproved' = 'false'::jsonb);
 
   -- Exactly the conditions under which case_state starts each clock.
   c.has_clock := c.status = 'open' and (
@@ -488,6 +492,7 @@ create table if not exists public.case_gates (
   decided_by    text,
   suggestions   text,
   addressed_at  timestamptz,
+  student_name  text,
   primary key (case_id, gate_id)
 );
 alter table public.case_gates
@@ -508,14 +513,16 @@ comment on table public.case_gates is 'Lyceum Placements — Placement Managemen
 create or replace function public.sync_case_gates() returns trigger
   language plpgsql security definer set search_path = public as $$
 begin
-  if tg_op = 'UPDATE' and new.data -> 'gates' is not distinct from old.data -> 'gates' and new.ref = old.ref then return null; end if;
+  if tg_op = 'UPDATE' and new.data -> 'gates' is not distinct from old.data -> 'gates' and new.ref = old.ref
+     and new.data -> 'student' ->> 'name' is not distinct from old.data -> 'student' ->> 'name' then return null; end if;
   delete from public.case_gates where case_id = new.id;
-  insert into public.case_gates (case_id, gate_id, case_ref, gate, round, status, submitted_at, submitted_by, decided_at, decided_by, suggestions, addressed_at)
+  insert into public.case_gates (case_id, gate_id, case_ref, gate, round, status, submitted_at, submitted_by, decided_at, decided_by, suggestions, addressed_at, student_name)
   select new.id, coalesce(e ->> 'id', i::text), new.ref,
          case when jsonb_typeof(e -> 'gate') = 'number' then (e ->> 'gate')::numeric::smallint end,
          case when jsonb_typeof(e -> 'round') = 'number' then (e ->> 'round')::numeric::integer end,
          e ->> 'status', public.lpl_ts(public.lpl_str(e -> 'submittedAt')), e ->> 'submittedBy',
-         public.lpl_ts(public.lpl_str(e -> 'decidedAt')), e ->> 'decidedBy', e ->> 'suggestions', public.lpl_ts(public.lpl_str(e -> 'addressedAt'))
+         public.lpl_ts(public.lpl_str(e -> 'decidedAt')), e ->> 'decidedBy', e ->> 'suggestions', public.lpl_ts(public.lpl_str(e -> 'addressedAt')),
+         new.data -> 'student' ->> 'name'
     from jsonb_array_elements(case when jsonb_typeof(new.data -> 'gates') = 'array' then new.data -> 'gates' else '[]'::jsonb end) with ordinality t(e, i)
    where jsonb_typeof(e) = 'object'
   on conflict (case_id, gate_id) do nothing;
@@ -528,7 +535,7 @@ create trigger cases_gates_sync after insert or update on public.cases for each 
 -- (default; newest decision first). p.gate: 16 | 19. Keyset: p.after = the last row's cursor.
 drop function if exists public.gates_page(jsonb);
 create function public.gates_page(p jsonb) returns table (
-  case_id text, gate_id text, case_ref text, gate smallint, round integer, status text, submitted_at timestamptz, submitted_by text,
+  case_id text, gate_id text, case_ref text, student_name text, gate smallint, round integer, status text, submitted_at timestamptz, submitted_by text,
   decided_at timestamptz, decided_by text, suggestions text, addressed_at timestamptz, cursor jsonb)
   language plpgsql stable security invoker set search_path = public set enable_sort = off set jit = off as $$
 declare
@@ -541,7 +548,7 @@ begin
       case when pending then '>' else '<' end, (p -> 'after' ->> 'at')::timestamptz, p -> 'after' ->> 'case', p -> 'after' ->> 'gate');
   end if;
   return query execute format($f$
-    select g.case_id, g.gate_id, g.case_ref, g.gate, g.round, g.status, g.submitted_at, g.submitted_by, g.decided_at, g.decided_by, g.suggestions, g.addressed_at,
+    select g.case_id, g.gate_id, g.case_ref, g.student_name, g.gate, g.round, g.status, g.submitted_at, g.submitted_by, g.decided_at, g.decided_by, g.suggestions, g.addressed_at,
            jsonb_build_object('at', g.%1$s, 'case', g.case_id, 'gate', g.gate_id)
       from public.case_gates g
      where %2$s
@@ -809,9 +816,9 @@ create function public.cases_page(p jsonb) returns table (
   docs_uploaded integer, docs_accepted integer, docs_rejected integer, profile_submitted boolean,
   cis_start_at timestamptz, cis2_from timestamptz, offer_lapse_at timestamptz, arrival_at timestamptz, hold_review_at timestamptz,
   retention_anchor_at timestamptz, retention_kind text, disposed boolean, legal_hold boolean,
-  last_event_at timestamptz, last_event_by text, destination text, channel text, exit_code text, done_mask integer, visa_granted boolean,
+  last_event_at timestamptz, last_event_by text, last_event_text text, destination text, channel text, exit_code text, done_mask integer, visa_granted boolean,
   cis_sent_at timestamptz, offer_decided_at timestamptz, profile_started boolean, consent_yes boolean,
-  transfers_total integer, transfers_unsafeguarded integer,
+  transfers_total integer, transfers_unsafeguarded integer, transfers_unapproved integer,
   breached integer, due_soon integer, severity_rank integer, retention text, retention_due_at timestamptz, worst_days integer, cursor jsonb)
   -- JIT compiles for the planner's worst case; a fifty-row page pays ~100 ms for nothing.
   language plpgsql stable security invoker set search_path = public set jit = off as $$
@@ -877,8 +884,8 @@ begin
     select id, ref, status, counsellor_id, student_user_id, student_name, student_email, created_at, data_updated_at, current_step, stage,
            progress_done, progress_applicable, progress_pct, gate_pending, gate_pending_at, gate_pending_round, gate_returned,
            docs_uploaded, docs_accepted, docs_rejected, profile_submitted, cis_start_at, cis2_from, offer_lapse_at, arrival_at, hold_review_at,
-           retention_anchor_at, retention_kind, disposed, legal_hold, last_event_at, last_event_by, destination, channel, exit_code, done_mask, visa_granted,
-           cis_sent_at, offer_decided_at, profile_started, consent_yes, transfers_total, transfers_unsafeguarded,
+           retention_anchor_at, retention_kind, disposed, legal_hold, last_event_at, last_event_by, last_event_text, destination, channel, exit_code, done_mask, visa_granted,
+           cis_sent_at, offer_decided_at, profile_started, consent_yes, transfers_total, transfers_unsafeguarded, transfers_unapproved,
            breached, due_soon, severity_rank, retention, retention_due_at, worst_days,
            jsonb_build_object('k', jsonb_build_array(%s), 'id', id)
       from public.case_state
@@ -924,9 +931,9 @@ begin
   perform set_config('lpl.now', p_now::text, true);
   execute format($f$
   with s as materialized (
-    select id, status, counsellor_id, stage, created_at, arrival_at, done_mask, visa_granted, destination, channel, exit_code,
+    select id, status, counsellor_id, stage, created_at, arrival_at, done_mask, visa_granted, destination, channel, exit_code, progress_pct,
            cis_start_at, cis_sent_at, offer_lapse_at, offer_decided_at, docs_uploaded, docs_accepted, docs_rejected,
-           profile_started, consent_yes, transfers_total, transfers_unsafeguarded,
+           profile_started, consent_yes, transfers_total, transfers_unsafeguarded, transfers_unapproved,
            breached, due_soon, severity_rank, retention, docs_to_review, gate_pending_now, gate_returned_now, profile_submitted_now,
            list_at, worst_days
       from public.case_state
@@ -941,6 +948,7 @@ begin
       count(*) as total,
       count(*) filter (where status = 'open') as open_total,
       count(*) filter (where status = 'open' and counsellor_id is null) as unassigned,
+      coalesce(floor(avg(progress_pct) filter (where status = 'open') + 0.5), 0)::int as progress_pct,
       coalesce(sum(breached) filter (where status = 'open'), 0) as breached,
       coalesce(sum(due_soon) filter (where status = 'open'), 0) as due_soon,
       count(*) filter (where gate_pending_now is not null) as gates_pending,
@@ -967,6 +975,7 @@ begin
       count(*) filter (where profile_started) as consent_total,
       count(*) filter (where profile_started and consent_yes) as consent_covered,
       coalesce(sum(transfers_total), 0) as transfers, coalesce(sum(transfers_unsafeguarded), 0) as unsafeguarded,
+      coalesce(sum(transfers_unapproved), 0) as unapproved,
       count(*) filter (where status = 'hold') as st_hold, count(*) filter (where status = 'deferred') as st_deferred,
       count(*) filter (where status = 'exited') as st_exited, count(*) filter (where status = 'completed') as st_completed,
       count(*) filter (where retention = 'none') as r_none, count(*) filter (where retention = 'scheduled') as r_scheduled,
@@ -977,7 +986,7 @@ begin
   select jsonb_build_object(
     'total', t.total,
     'status', jsonb_build_object('open', t.open_total, 'hold', t.st_hold, 'deferred', t.st_deferred, 'exited', t.st_exited, 'completed', t.st_completed),
-    'open', jsonb_build_object('total', t.open_total, 'unassigned', t.unassigned, 'breached', t.breached, 'dueSoon', t.due_soon,
+    'open', jsonb_build_object('total', t.open_total, 'unassigned', t.unassigned, 'progressPct', t.progress_pct, 'breached', t.breached, 'dueSoon', t.due_soon,
               'gatesPending', t.gates_pending, 'gatesReturned', t.gates_returned, 'docsToReview', t.docs_to_review, 'profileSubmitted', t.profile_submitted),
     'retention', jsonb_build_object('none', t.r_none, 'scheduled', t.r_scheduled, 'due_soon', t.r_due_soon, 'overdue', t.r_overdue, 'held', t.r_held, 'disposed', t.r_disposed),
     'byStage', (select jsonb_agg(jsonb_build_object('stage', g, 'open', coalesce(x.open, 0), 'bad', coalesce(x.bad, 0)) order by g)
@@ -1013,7 +1022,7 @@ begin
     'leadDays', case when t.lead_n > 0 then floor(t.lead_sum / t.lead_n + 0.5)::int end,
     'compliance', jsonb_build_object('consentCovered', t.consent_covered, 'consentTotal', t.consent_total,
               'consentPct', case when t.consent_total > 0 then floor(t.consent_covered::numeric * 100 / t.consent_total + 0.5)::int else 100 end,
-              'transfers', t.transfers, 'unsafeguarded', t.unsafeguarded),
+              'transfers', t.transfers, 'unsafeguarded', t.unsafeguarded, 'unapproved', t.unapproved),
     -- The heads of the two queues a home screen shows, so it needs no scan of its own: what
     -- needs someone (worst first, then most recently updated) and breached clocks (most
     -- overdue first). Ids only; the page reads their summaries by id.
@@ -1146,7 +1155,7 @@ end $$;
 drop function if exists public.users_page(jsonb);
 create function public.users_page(p jsonb) returns table (
   id text, email text, name text, phone text, branch text, role text, active boolean, created_at timestamptz, created_by text,
-  last_sign_in_at timestamptz, has_sign_in boolean, cursor jsonb)
+  last_sign_in_at timestamptz, has_sign_in boolean, case_id text, case_ref text, cursor jsonb)
   language plpgsql stable security invoker set search_path = public set jit = off as $$
 declare
   w text[] := array['true'];
@@ -1172,8 +1181,12 @@ begin
   if ids is null then perform set_config('enable_sort', 'off', true); end if;
   return query execute format($f$
     select u.id, u.email, u.name, u.phone, u.branch, u.role, u.active, u.created_at, u.created_by, u.last_sign_in_at, u.auth_id is not null,
+           sc.id, sc.ref,
            jsonb_build_object('name', u.name_key, 'id', u.id)
       from public.app_users u
+      -- A student's case (the most recently updated one the caller may see), for the link.
+      left join lateral (select c.id, c.ref from public.cases c where u.role = 'student' and c.student_user_id = u.id
+                          order by c.list_at desc limit 1) sc on true
      where %s
      order by u.name_key collate "C", u.id collate "C"
      limit %s$f$, array_to_string(w, ' and '), least(greatest(coalesce((p ->> 'limit')::integer, 50), 1), 200));
@@ -1213,12 +1226,13 @@ begin
          e ->> 'lawfulBasis', e ->> 'safeguard', e ->> 'note', e ->> 'byName'
     from public.cases c, jsonb_array_elements(case when jsonb_typeof(c.data -> 'transfers') = 'array' then c.data -> 'transfers' else '[]'::jsonb end) with ordinality t(e, i)
   on conflict (case_id, transfer_id) do nothing;
-  insert into public.case_gates (case_id, gate_id, case_ref, gate, round, status, submitted_at, submitted_by, decided_at, decided_by, suggestions, addressed_at)
+  insert into public.case_gates (case_id, gate_id, case_ref, gate, round, status, submitted_at, submitted_by, decided_at, decided_by, suggestions, addressed_at, student_name)
   select c.id, coalesce(e ->> 'id', i::text), c.ref,
          case when jsonb_typeof(e -> 'gate') = 'number' then (e ->> 'gate')::numeric::smallint end,
          case when jsonb_typeof(e -> 'round') = 'number' then (e ->> 'round')::numeric::integer end,
          e ->> 'status', public.lpl_ts(public.lpl_str(e -> 'submittedAt')), e ->> 'submittedBy',
-         public.lpl_ts(public.lpl_str(e -> 'decidedAt')), e ->> 'decidedBy', e ->> 'suggestions', public.lpl_ts(public.lpl_str(e -> 'addressedAt'))
+         public.lpl_ts(public.lpl_str(e -> 'decidedAt')), e ->> 'decidedBy', e ->> 'suggestions', public.lpl_ts(public.lpl_str(e -> 'addressedAt')),
+         c.data -> 'student' ->> 'name'
     from public.cases c, jsonb_array_elements(case when jsonb_typeof(c.data -> 'gates') = 'array' then c.data -> 'gates' else '[]'::jsonb end) with ordinality t(e, i)
    where jsonb_typeof(e) = 'object'
   on conflict (case_id, gate_id) do nothing;

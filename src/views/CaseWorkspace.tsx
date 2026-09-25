@@ -10,7 +10,8 @@ import { store } from "@/lib/store";
 import { canReadCase, canWorkCase, caseScopeOf } from "@/lib/rbac";
 import { PIPELINE, STEP_BY_N, EXIT_CODES, pipelineOfStep } from "@/lib/spine";
 import { derivedStatus, currentStep, pipelineProgress, slaFlags, latestGate, fmtDateTime, fmtDate, fmtMonth, changeStatus, pendingReviewCount, stepState, caseProgress, caseDestination, caseProgramme, caseTransfers, retentionDue, retentionState, RETENTION_LABEL, daysUntil, exitStageLabel, redactSensitive } from "@/lib/logic";
-import { Pill, statusTone, STATUS_LABEL, Modal, useToast, Avatar, Notice, ValueDisplay, isVisible, Tabs, TabPanel, TextArea, SelectField, Field, SeverityChip } from "@/lib/ui";
+import { Pill, statusTone, STATUS_LABEL, Modal, useToast, Avatar, Notice, ValueDisplay, isVisible, Tabs, TabPanel, TextArea, SelectField, Field, SeverityChip, PageSkeleton } from "@/lib/ui";
+import { useCase } from "@/lib/useRead";
 import { Ring, StageTrack } from "@/lib/charts";
 import { StepPanel } from "@/views/StepPanel";
 import { DocumentChecklist } from "@/views/Documents";
@@ -25,7 +26,25 @@ type Tab = "step" | "documents" | "timeline" | "profile" | "dp";
 /** Pipeline stage id that presents a step; falls back to the first stage for an unknown step number from the URL. */
 const stageIdOf = (n: number): string => (STEP_BY_N[n] ? pipelineOfStep(n) : PIPELINE[0]).id;
 
+/**
+ * A case opened from a list, a notification or a link. On a server the document is fetched
+ * when it is opened (lists carry summaries only) and watched while it stays open.
+ */
 export function CaseWorkspace({ caseId }: { caseId: string }) {
+  const { cases, go } = useSession();
+  const { c, loading, error } = useCase(caseId, cases);
+  if (c) return <CaseWorkspaceView caseId={caseId} />;
+  if (loading) return <PageSkeleton variant="workspace" label="Opening case" />;
+  return (
+    <div className="panel"><div className="panel-b">
+      <h2>This case is not available</h2>
+      <p className="muted mt1">{error ?? "It does not exist, or it is not in your caseload."}</p>
+      <button type="button" className="btn btn-secondary mt3" onClick={() => go({ page: "cases" })}>Back to cases</button>
+    </div></div>
+  );
+}
+
+function CaseWorkspaceView({ caseId }: { caseId: string }) {
   const { cases, users, user, can, snap, go, route, audit } = useSession();
   const toast = useToast();
   const c = cases[caseId];

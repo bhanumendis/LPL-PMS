@@ -58,6 +58,7 @@ html[data-theme="dark"] .skeleton::after { background: linear-gradient(90deg, tr
 .sk-block { display: block; border-radius: var(--r-lg); }
 .sk-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
 .sk-pad { padding: 14px 18px; }
+.page-footer { padding: 12px 4px 4px; }
 .sk-hero { display: flex; gap: 20px; align-items: center; }
 .sk-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .sk-cols.wide { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }

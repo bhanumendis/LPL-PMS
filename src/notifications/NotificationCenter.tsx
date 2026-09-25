@@ -10,7 +10,8 @@ import { useEffect, useMemo, type RefObject } from "react";
 import { ArrowRight, Settings2 } from "lucide-react";
 import { useSession } from "@/App";
 import { EmptyState, Layer, Notice, SegmentedSwitch, SeverityChip, Skeleton, Tooltip } from "@/lib/ui";
-import { useCaseSignals } from "@/lib/signals";
+import { useRowSignals } from "@/lib/signals";
+import { useCasePage } from "@/lib/useRead";
 import { useNotifications, type NotificationFilter } from "./useNotifications";
 import { dayBucket, deriveReminders } from "./reminders";
 import { NotificationItem } from "./NotificationItem";
@@ -19,7 +20,15 @@ import type { NotificationRow } from "./types";
 export function NotificationCenter({ open, onClose, anchorRef, onSettings, model }: { open: boolean; onClose: () => void; anchorRef: RefObject<HTMLButtonElement>; onSettings?: () => void; model: ReturnType<typeof useNotifications> }) {
   const { user, cases } = useSession();
   const { unread, latest, items, loading, hasMore, error, filter, setFilter, open: reload, loadMore, markRead, markAll } = model;
-  const signals = useCaseSignals();
+  // Reminders are the caller's own flagged open cases, read while the center is open.
+  const mine = open && user && user.role !== "student";
+  const due = useCasePage(mine ? { counsellor: user.id, status: ["open"], clock: "due", sort: "urgency" } : null, 50);
+  const returned = useCasePage(mine ? { counsellor: user.id, gate: "returned" } : null, 50);
+  const flaggedRows = useMemo(() => {
+    const byId = new Map([...due.rows, ...returned.rows].map((r) => [r.id, r]));
+    return [...byId.values()];
+  }, [due.rows, returned.rows]);
+  const signals = useRowSignals(flaggedRows);
   const reminders = useMemo(() => (user ? deriveReminders(signals.values(), user.id) : []), [signals, user]);
 
   // Load on open, on filter change, and when something new arrives while open.

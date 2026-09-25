@@ -4,22 +4,21 @@
  * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
  */
 import { PIPELINE } from "@/lib/spine";
-import type { CaseSignals } from "@/lib/signals";
+import type { DashboardSummary } from "@/lib/summary";
 
 /** The overview CSV kept from v4: headline counts plus open cases by stage. */
-export function overviewCsv(signals: CaseSignals[]): string {
-  const open = signals.filter((s) => s.status === "open");
+export function overviewCsv(d: DashboardSummary): string {
   const rows: (string | number)[][] = [
     ["Metric", "Value"],
-    ["Open cases", open.length],
-    ["Unassigned", open.filter((s) => !s.counsellorId).length],
-    ["Awaiting Team Leader", open.filter((s) => s.gatePending).length],
-    ["SLA breaches", open.reduce((n, s) => n + s.breached, 0)],
-    ["Documents to review", open.reduce((n, s) => n + s.docsToReview, 0)],
-    ["On hold or deferred", signals.filter((s) => s.status === "hold" || s.status === "deferred").length],
-    ["Exited", signals.filter((s) => s.status === "exited").length],
-    ["Completed", signals.filter((s) => s.status === "completed").length],
-    ...PIPELINE.map((p) => [`Stage: ${p.n}. ${p.name}`, open.filter((s) => s.stage.id === p.id).length] as (string | number)[]),
+    ["Open cases", d.open.total],
+    ["Unassigned", d.open.unassigned],
+    ["Awaiting Team Leader", d.open.gatesPending],
+    ["SLA breaches", d.open.breached],
+    ["Documents to review", d.open.docsToReview],
+    ["On hold or deferred", d.status.hold + d.status.deferred],
+    ["Exited", d.status.exited],
+    ["Completed", d.status.completed],
+    ...PIPELINE.map((p) => [`Stage: ${p.n}. ${p.name}`, d.byStage.find((b) => b.stage === p.n)?.open ?? 0] as (string | number)[]),
   ];
   return rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
 }

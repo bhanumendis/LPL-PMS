@@ -31,6 +31,11 @@ type parityFixture struct {
 	Summaries  map[string]map[string]any            `json:"summaries"`
 	States     map[string]map[string]map[string]any `json:"states"`
 	Dashboards map[string]any                       `json:"dashboards"`
+	Queries    []struct {
+		Config string         `json:"config"`
+		P      map[string]any `json:"p"`
+		IDs    []string       `json:"ids"`
+	} `json:"queries"`
 }
 
 // normal makes values comparable across JSON sources: instants as UTC milliseconds, numbers

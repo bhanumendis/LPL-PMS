@@ -33,21 +33,27 @@ describe("performance guards", () => {
     expect(renders).toBe(before);
   });
 
-  it("the server workspace load reads no audit rows", async () => {
+  it("the server workspace load reads nothing that grows with the organisation", async () => {
     const urls: string[] = [];
+    const token = `h.${btoa(JSON.stringify({ sub: "auth-1" }))}.s`;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       urls.push(url);
-      if (url.includes("/auth/v1/token")) return json({ access_token: "t", refresh_token: "r", expires_in: 3600, user: { id: "auth-1" } });
+      if (url.includes("/auth/v1/token")) return json({ access_token: token, refresh_token: "r", expires_in: 3600, user: { id: "auth-1" } });
       if (url.includes("/rest/v1/org_config")) return json([{ id: "org", config: {} }]);
+      if (url.includes("auth_id=eq.auth-1")) return json([{ id: "u1", auth_id: "auth-1", email: "a@x.lk", name: "A", role: "admin", active: true, created_at: "2026-01-01T00:00:00Z" }]);
       return json([]);
     });
     const backend = new SupabaseBackend({ url: "https://example.supabase.co", anonKey: "anon" });
     await backend.signIn("a@example.com", "pw");
     urls.length = 0;
     await backend.load();
-    expect(urls.some((u) => u.includes("/rest/v1/audit"))).toBe(false);
-    expect(urls.filter((u) => u.includes("/rest/v1/")).length).toBe(4);
+    const rest = urls.filter((u) => u.includes("/rest/v1/"));
+    // Configuration, the staff directory, the caller's own profile, prompts. No audit rows,
+    // no case documents and no student profiles for a staff member.
+    expect(rest).toHaveLength(4);
+    expect(rest.some((u) => u.includes("/rest/v1/audit") || u.includes("/rest/v1/cases"))).toBe(false);
+    expect(rest.filter((u) => u.includes("/rest/v1/app_users")).every((u) => u.includes("role=neq.student") || u.includes("auth_id=eq."))).toBe(true);
   });
 
   it("blur is declared only on the float tier (at most six rules across the stylesheets)", () => {

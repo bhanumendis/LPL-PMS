@@ -12,7 +12,8 @@ import { LogOut, Moon, Sun } from "lucide-react";
 import { useSession, useDocumentTitle } from "@/App";
 import { caseScopeOf } from "@/lib/rbac";
 import { BP, useMediaQuery } from "@/lib/hooks";
-import { countBadges, useCaseSignals } from "@/lib/signals";
+import { badgesOf } from "@/lib/signals";
+import { useCaseCount, useDashboard } from "@/lib/useRead";
 import { RegionBoundary } from "@/lib/ui/boundary";
 import { activeDestination, destinationsFor, moreDestination, pageTitle, type NavInput } from "./nav";
 import { TopBar } from "./TopBar";
@@ -49,8 +50,10 @@ export function AppShell() {
   useEffect(() => { if (!visited.includes(pageKey)) setVisited((v) => (v.includes(pageKey) ? v : [...v, pageKey])); }, [pageKey, visited, setVisited]);
   const activeId = activeDestination(page, primary) ?? (moreDest && moreDest.pages.includes(page) ? "more" : undefined);
   const activeDest = primary.find((d) => d.id === activeId);
-  const signals = useCaseSignals();
-  const badges = useMemo(() => countBadges(signals.values(), { mineId: seesAll ? undefined : user?.id }), [signals, seesAll, user?.id]);
+  // Badges come from the dashboard: every case for a role that sees them all (one shared,
+  // cached answer on a server), otherwise the caller's own caseload.
+  const dashboard = useDashboard(!!user && user.role !== "student" && scope !== "none");
+  const badges = useMemo(() => badgesOf(dashboard.data), [dashboard.data]);
   useDocumentTitle(pageTitle(page, navInput));
 
   const compact = useMediaQuery(BP.compact);
@@ -62,11 +65,12 @@ export function AppShell() {
   const railOn = railEnabled(snap.org.config, user);
   const [railOpen, setRailOpen] = useState(false);
   const railMode: RailMode = mobile ? "sheet" : "strip";
-  const attentionCount = useMemo(() => (user ? [...signals.values()].filter((x) => x.counsellorId === user.id && x.status === "open" && x.severity !== "none").length : 0), [signals, user]);
+  const attention = useCaseCount(railOn && user ? { counsellor: user.id, status: ["open"], attention: true } : null, 100);
+  const attentionCount = attention.data ?? 0;
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const searchRef = useRef<HTMLButtonElement>(null);
-  const commands = useMemo(() => buildCommands(s, primary, moreDest, signals), [s, primary, moreDest, signals]);
+  const commands = useMemo(() => buildCommands(s, primary, moreDest), [s, primary, moreDest]);
   const notifications = useNotifications();
   const [centerOpen, setCenterOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -126,7 +130,8 @@ export function AppShell() {
         )}
       </div>
       {tablet && <MobileTabBar primary={primary} more={moreDest} activeId={activeId} activePage={page} badges={badges} onNavigate={navigate} moreExtra={moreExtra} extraTab={studentsTab} />}
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} anchorRef={searchRef} />
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} anchorRef={searchRef}
+        searchCases={role !== "student" && scope !== "none"} onOpenCase={(caseId) => go({ page: "case", caseId })} />
       <NotificationCenter open={centerOpen} onClose={() => setCenterOpen(false)} anchorRef={bellRef} model={notifications} onSettings={() => { setCenterOpen(false); setSettingsOpen(true); }} />
       <Layer open={settingsOpen} onClose={() => setSettingsOpen(false)} anchorRef={bellRef} label="Notification settings" width={440}>
         <div className="layer-h"><h2>Notification settings</h2></div>

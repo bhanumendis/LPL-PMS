@@ -21,7 +21,8 @@ describe("role dashboards", () => {
     expect(await screen.findByRole("heading", { level: 1, name: /Good (morning|afternoon|evening), Nadeesha/ })).toBeInTheDocument();
     const main = screen.getByRole("main");
     expect(within(main).getByRole("group", { name: "Your position" })).toBeInTheDocument();
-    const queue = within(main).getByRole("region", { name: "Overdue" });
+    // The queue's head is read after the dashboard names it.
+    const queue = await within(main).findByRole("region", { name: "Overdue" });
     expect(queue).toHaveTextContent("Gate 16 returned with suggestions");
     fireEvent.click(within(queue).getByRole("button", { name: /Open gate/ }));
     expect(window.location.hash).toBe("#/case/c1/step/16");
@@ -39,9 +40,10 @@ describe("role dashboards", () => {
     const main = await screen.findByRole("main");
     expect(await within(main).findByRole("group", { name: "Team position" })).toHaveTextContent("Awaiting my decision");
     const q = within(main).getByRole("region", { name: "Awaiting my decision" });
-    expect(q).toHaveTextContent("Verify financials for acceptance");
+    expect(await within(q).findByText(/Verify financials for acceptance/)).toBeInTheDocument();
     fireEvent.click(within(main).getByRole("button", { name: "Review" }));
-    expect(window.location.hash).toBe("#/approvals/g1");
+    // The queue lists cases, so the review opens the case's pending submission.
+    expect(window.location.hash).toBe("#/approvals/case%3Ac1");
     expect(await screen.findByRole("dialog", { name: /Verify financials for acceptance/ })).toBeInTheDocument();
   });
   it("administrator: system position, compliance, system health and activity", async () => {
