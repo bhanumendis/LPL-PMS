@@ -156,6 +156,8 @@ export default function App() {
       <Ctx.Provider value={value}>
         {!snap.loaded ? (
           <ShellSkeleton />
+        ) : snap.backend === "unconfigured" ? (
+          <NotConnected />
         ) : !user ? (
           <AuthScreen />
         ) : (
@@ -163,6 +165,23 @@ export default function App() {
         )}
       </Ctx.Provider>
     </ToastProvider>
+  );
+}
+
+/**
+ * A production build that was not given its server. Records are never kept in the browser
+ * instead, so there is nothing to sign in to; the screen says so and who can fix it.
+ */
+function NotConnected() {
+  useEffect(() => { document.title = `Not connected — ${ORG_SHORT}`; }, []);
+  return (
+    <main className="loading" id="main">
+      <div className="panel" style={{ maxWidth: 520, padding: "26px 28px" }}>
+        <Wordmark size="sm" />
+        <h1 className="mt4" style={{ fontSize: 22 }}>This installation is not connected to its server</h1>
+        <p className="muted mt2">The Placement Management System keeps every record on its server, so it cannot be used until that connection is configured. Please contact Group IT.</p>
+      </div>
+    </main>
   );
 }
 
@@ -197,6 +216,7 @@ export function LiveBadge() {
   const age = Math.round((Date.now() - Math.max(store.syncedAt, snap.syncedAt)) / 1000);
   const stale = (snap.backend === "shared" || snap.backend === "server") && age > 30;
   const label = snap.error ? "Sync error"
+    : snap.backend === "unconfigured" ? "Not connected"
     : snap.backend === "server" ? "Live · server"
     : snap.backend === "shared" ? "Live · shared workspace"
     : snap.backend === "local" ? "Saved in this browser" : "Session only";

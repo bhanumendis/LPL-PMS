@@ -21,22 +21,30 @@ import type { AuditQuery } from "./store";
 import { defaultAudit, defaultCases, defaultConfig, defaultPrompts, normalizeConfig } from "./defaults";
 import type { NotificationRow, NotificationState, NotificationType, Priority } from "@/notifications/types";
 import type { PushDevice, PushSubscriptionInput } from "@/notifications/push";
+import { BROWSER_STORAGE_ALLOWED } from "./runtime";
 
 export interface ServerConfig { url: string; anonKey: string }
 
 const SERVER_KEY = "lpl:pms:server";
 const SESSION_KEY = "lpl:pms:server-session";
 
-/** Build-time configuration, used when the app is served rather than opened as a file. */
+/**
+ * Build-time connection: VITE_API_URL points at lpl-api (or, during development, straight at
+ * a Supabase project), VITE_API_ANON_KEY is the public key. The v5 names are still read.
+ */
 function buildTimeConfig(): ServerConfig | null {
   const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
-  const url = env.VITE_SUPABASE_URL;
-  const anonKey = env.VITE_SUPABASE_ANON_KEY;
+  const url = env.VITE_API_URL || env.VITE_SUPABASE_URL;
+  const anonKey = env.VITE_API_ANON_KEY || env.VITE_SUPABASE_ANON_KEY;
   return url && anonKey ? { url: url.replace(/\/+$/, ""), anonKey } : null;
 }
 
-/** A connection entered in Settings wins over the build-time one, so one file can be repointed. */
+/**
+ * Production: the build-time connection and nothing else. Development: a connection entered
+ * in Settings wins over the build-time one, so a local build can be pointed at a test stack.
+ */
 export function readServerConfig(): ServerConfig | null {
+  if (!BROWSER_STORAGE_ALLOWED) return buildTimeConfig();
   try {
     const raw = localStorage.getItem(SERVER_KEY);
     if (raw) {
@@ -48,6 +56,7 @@ export function readServerConfig(): ServerConfig | null {
 }
 
 export function writeServerConfig(cfg: ServerConfig | null): void {
+  if (!BROWSER_STORAGE_ALLOWED) return;
   try {
     if (cfg) localStorage.setItem(SERVER_KEY, JSON.stringify({ url: cfg.url.replace(/\/+$/, ""), anonKey: cfg.anonKey }));
     else localStorage.removeItem(SERVER_KEY);
@@ -263,8 +272,13 @@ async function readableRestError(res: Response): Promise<string> {
   const body = await res.json().catch(() => null) as { message?: string; hint?: string } | null;
   if (res.status === 401 || res.status === 403) return "Your session does not permit that. Sign in again, or ask an administrator to check your role.";
   if (res.status === 409 && body?.hint === "stale_revision") return body.message ?? "This record was changed by someone else. Reload and try again.";
-  // Database and gateway internals never reach the user; the status still tells support where to look.
-  if (res.status >= 500) return `The server could not complete the request (${res.status}). Try again in a moment.`;
+  // Database and gateway internals never reach the user. The API's request id is the reference
+  // support looks up in the server log.
+  if (res.status >= 500) {
+    const ref = res.headers.get("x-request-id");
+    return `The server could not complete the request. Try again in a moment.${ref ? ` Reference ${ref}.` : ""}`;
+  }
+  if (res.status === 429) return "Too many requests. Wait a minute and try again.";
   return body?.message ? `${body.message}${body.hint ? ` — ${body.hint}` : ""}` : `Request failed (${res.status}).`;
 }
 

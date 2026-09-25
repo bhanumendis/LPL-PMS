@@ -21,6 +21,7 @@ import { fanout } from "@/notifications/fanout";
 import type { PushDevice, PushSubscriptionInput } from "@/notifications/push";
 import type { AuditEvent, AuditEventType, EntityType } from "./audit";
 import { sessionId } from "./hooks";
+import { BROWSER_STORAGE_ALLOWED } from "./runtime";
 
 /** Filters for one page of the audit log. `before` is the `at` of the last row already shown. */
 export interface AuditQuery { before?: string | null; actorId?: string; eventType?: AuditEventType; entityType?: EntityType; entityId?: string; from?: string; to?: string; q?: string; limit?: number }
@@ -48,7 +49,7 @@ export function filterAudit(entries: AuditEntry[], q: AuditQuery, now = Date.now
 
 export { DEFAULT_RETENTION, MIN_PASSWORD_LENGTH, defaultConfig, defaultOrg, defaultCases, defaultAudit, defaultPrompts };
 
-export type BackendKind = "server" | "shared" | "local" | "memory";
+export type BackendKind = "server" | "shared" | "local" | "memory" | "unconfigured";
 
 export interface Workspace {
   org: OrgState;
@@ -291,13 +292,31 @@ function localStorageUsable(): boolean {
   } catch { return false; }
 }
 
+/**
+ * A production build with no server connection. It holds nothing and accepts nothing; the
+ * application shows the "not connected" screen instead of quietly keeping records in the
+ * browser, where they would be unprotected and invisible to everyone else.
+ */
+class UnconfiguredBackend extends KvBackend {
+  kind = "memory" as const;
+  polling = false;
+  protected kv: Kv = {
+    get: async () => null,
+    set: async () => { throw new Error("This installation is not connected to its server."); },
+    del: async () => undefined,
+  };
+}
+
 function pickBackend(): Backend {
   const server = readServerConfig();
   if (server) return new SupabaseBackend(server);
+  if (!BROWSER_STORAGE_ALLOWED) return new UnconfiguredBackend();
   if (typeof window !== "undefined" && window.storage && typeof window.storage.get === "function") return new SharedBackend();
   if (typeof window !== "undefined" && localStorageUsable()) return new LocalStorageBackend();
   return new MemoryBackend();
 }
+
+function kindOf(b: Backend): BackendKind { return b instanceof UnconfiguredBackend ? "unconfigured" : b.kind; }
 
 // ---------- helpers ----------
 
@@ -376,9 +395,9 @@ class Store {
   private timer: number | null = null;
   private unwatch: (() => void) | null = null;
   private busy = 0;
-  snap: Snapshot = { ...defaultWorkspace(), loaded: false, syncedAt: 0, backend: this.backend.kind };
+  snap: Snapshot = { ...defaultWorkspace(), loaded: false, syncedAt: 0, backend: kindOf(this.backend) };
 
-  get kind(): BackendKind { return this.backend.kind; }
+  get kind(): BackendKind { return kindOf(this.backend); }
 
   /** The server adapter when one is connected, for the sign-in flow. Null on browser storage. */
   get server(): SupabaseBackend | null { return this.backend instanceof SupabaseBackend ? this.backend : null; }
@@ -389,7 +408,7 @@ class Store {
     this.unwatch?.(); this.unwatch = null;
     if (this.backend instanceof MemoryBackend) this.backend.close();
     this.backend = pickBackend();
-    this.snap = { ...defaultWorkspace(), loaded: false, syncedAt: 0, backend: this.backend.kind };
+    this.snap = { ...defaultWorkspace(), loaded: false, syncedAt: 0, backend: kindOf(this.backend) };
     this.emit();
     return this.start();
   }

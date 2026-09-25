@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { build } from "esbuild";
+import { loadEnv } from "vite";
 
 const { version } = JSON.parse(fs.readFileSync("package.json", "utf8"));
 const src = "dist/index.html";
@@ -12,13 +13,16 @@ let html = fs.readFileSync(src, "utf8");
 await build({ entryPoints: ["src/sw.ts"], bundle: true, minify: true, format: "iife", target: "es2019", outfile: "dist/sw.js", legalComments: "inline", logLevel: "silent" });
 
 // Content-Security-Policy: every inline script is allowed by hash, so nothing else can run;
-// styles need 'unsafe-inline' because React sets style attributes; the Supabase project URL is
-// entered at runtime, so connect-src is the platform wildcard; worker-src admits sw.js.
+// styles need 'unsafe-inline' because React sets style attributes; connect-src admits exactly
+// the API the build was made for (the production build refuses to run without one, see
+// vite.config.ts), plus any origins in LPL_CONNECT_SRC; worker-src admits sw.js.
 const hashes = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)]
   .map((m) => m[1]).filter((s) => s.trim().length)
   .map((s) => `'sha256-${createHash("sha256").update(s, "utf8").digest("base64")}'`);
-// Extra API origins, space-separated, for a build that talks to the Go service (server/)
-// instead of Supabase directly: LPL_CONNECT_SRC="https://api.example.com". Unset = unchanged.
+const env = loadEnv("production", process.cwd(), "VITE_");
+const apiUrl = env.VITE_API_URL || env.VITE_SUPABASE_URL;
+if (!apiUrl) throw new Error("finalize: VITE_API_URL is not set; the production build has no API to admit.");
+// Extra origins, space-separated, e.g. a second API during a cutover: LPL_CONNECT_SRC="https://api2.example.com".
 const extraConnect = (process.env.LPL_CONNECT_SRC ?? "").split(/\s+/).filter(Boolean);
 const csp = [
   "default-src 'none'",
@@ -26,7 +30,7 @@ const csp = [
   "style-src 'unsafe-inline'",
   "img-src data: blob:",
   "font-src data:",
-  `connect-src ${["https://*.supabase.co", "https://*.supabase.in", ...extraConnect].join(" ")}`,
+  `connect-src ${[...new Set([new URL(apiUrl).origin, ...extraConnect])].join(" ")}`,
   "worker-src 'self'",
   "base-uri 'none'",
   "form-action 'none'",
@@ -35,11 +39,10 @@ html = html.replace(/<meta charset="UTF-8" \/>/, `<meta charset="UTF-8" />\n    
 
 const banner = `<!--
   Lyceum Placements — Placement Management System (v${version})
-  Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-  Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
-  Single-file production build. Records are held on the connected Supabase project; without a
-  connection the file stores records in this browser only (see src/lib/store.ts).
-  sw.js (beside this file on a hosted build) receives Web Push notifications.
+  Developed by Bhanu Mendis - Group IT
+  Production build for ${new URL(apiUrl).origin}. Every record is held on that server; the
+  application never stores records in the browser. sw.js (beside this file on a hosted
+  build) receives Web Push notifications.
 -->
 `;
 html = html.replace(/^(<!doctype html>\s*)/i, "$1" + banner);

@@ -4,7 +4,7 @@
  * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
  */
 import { useRef, useState } from "react";
-import { Save, Download, Upload, Trash2, FlaskConical, Eraser } from "lucide-react";
+import { Save, Download, Upload, Trash2 } from "lucide-react";
 import { useSession } from "@/App";
 import { store, DEFAULT_RETENTION } from "@/lib/store";
 import { readServerConfig, writeServerConfig } from "@/lib/server";
@@ -12,7 +12,7 @@ import { Panel, useToast, Notice, Modal, TextField, TextArea, PageHeader } from 
 import { retentionPolicy } from "@/lib/logic";
 import type { AuditState, CasesState, OrgConfig, OrgState, PromptsState } from "@/lib/types";
 import { EVENTS, diffChanges } from "@/lib/audit";
-import { addSampleData, removeSampleData, sampleCounts, isSampleId, SAMPLE_PASSWORD, SAMPLE_SHAPE_SUMMARY } from "@/lib/sample";
+import { BROWSER_STORAGE_ALLOWED } from "@/lib/runtime";
 
 /** The editable settings as form strings; also the "before" side of the audit diff. */
 function settingsForm(cfg: OrgConfig, ret: ReturnType<typeof retentionPolicy>) {
@@ -59,16 +59,16 @@ export function SettingsPage() {
     await audit(EVENTS.settingsUpdated(diffChanges(settingsForm(cfg, ret), f, SETTINGS_FIELDS)));
     toast("Settings saved");
   };
-  const reset = async () => { if (!mayReset || !user) return; await store.resetAll(); await store.audit(EVENTS.workspaceReset(), user); setConfirm(null); signOut(); };
+  const reset = async () => { if (!mayReset || !user || snap.backend === "server") return; await store.resetAll(); await store.audit(EVENTS.workspaceReset(), user); setConfirm(null); signOut(); };
   const backup = () => {
-    if (!isAdmin) return;
+    if (!isAdmin || snap.backend === "server") return;
     const data = { exportedAt: new Date().toISOString(), org: snap.org, cases: snap.cases, audit: snap.audit, prompts: snap.prompts };
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })); a.download = `lpl-pms-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click();
     void audit(EVENTS.backupExported());
     toast("Backup downloaded");
   };
   const restore = async (file: File) => {
-    if (!isAdmin) return;
+    if (!isAdmin || snap.backend === "server") return;
     try {
       const data = JSON.parse(await file.text()) as { org?: OrgState; cases?: CasesState; audit?: AuditState; prompts?: PromptsState };
       if (!data.org?.config || !data.cases?.cases) throw new Error("not a backup");
@@ -118,20 +118,22 @@ export function SettingsPage() {
             <TextField label="VAPID public key" value={f.vapidPublicKey} onChange={(v) => setF({ ...f, vapidPublicKey: v })} hint="Leave empty to keep push switched off; the bell and in-app notifications work regardless." autoComplete="off" />
           </div>
         </Panel>
-        <ServerPanel />
-        {isAdmin && <SampleDataPanel />}
+        {BROWSER_STORAGE_ALLOWED && <ServerPanel />}
         <Panel title="Workspace">
           <div className="stack-sm small">
             <p>Data store: <b className="ui">{snap.backend === "server" ? "Connected server" : snap.backend === "shared" ? "Shared live workspace" : snap.backend === "local" ? "This browser" : "This session only"}</b></p>
             <p className="muted">{snap.backend === "server" ? "Records are held on the connected server. Who may read a case is decided there by row-level security, not by this application." : snap.backend === "shared" ? "Every signed-in user reads and writes the same records." : snap.backend === "local" ? "Records are held in this browser's local storage and mirrored across its open tabs. Take a backup before clearing browser data." : "Storage is unavailable in this browser, so records last only for this session."}</p>
-            {isAdmin && (
+            {snap.backend === "server" && (
+              <p className="muted">Backups of a server are taken by the database platform (daily backups and point-in-time recovery) and restored by Group IT; see docs/OPERATIONS.md. Individual records can be exported from each case.</p>
+            )}
+            {isAdmin && snap.backend !== "server" && (
               <div className="flex wrap g2 mt2">
                 <button type="button" className="btn btn-secondary btn-sm" onClick={backup}><Download aria-hidden />Download backup</button>
                 <button type="button" className="btn btn-secondary btn-sm" onClick={() => fileRef.current?.click()}><Upload aria-hidden />Restore backup</button>
                 <input ref={fileRef} type="file" accept="application/json,.json" multiple={false} className="sr-only" tabIndex={-1} aria-hidden="true" onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) void restore(file); }} />
               </div>
             )}
-            {mayReset && (
+            {mayReset && snap.backend !== "server" && (
               <>
                 <Notice tone="bad">Resetting removes every account, case, document record, prompt template and audit entry and returns the system to first-run setup.</Notice>
                 <div><button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirm("reset")}><Trash2 aria-hidden />Reset workspace</button></div>
@@ -148,102 +150,6 @@ export function SettingsPage() {
     </div>
   );
 }
-
-/**
- * Demonstration data, for showing the system to a room. Adding merges a self-contained set of
- * staff accounts, students and cases into the workspace; removing deletes exactly that set and
- * nothing else, so it stays safe to use on a workspace that already holds real records.
- *
- * Administrator only, and deliberately not offered while a server is connected: the generated
- * accounts exist in browser storage and would have no identity-provider sign-in behind them.
- */
-function SampleDataPanel() {
-  const { snap, user } = useSession();
-  const toast = useToast();
-  const [busy, setBusy] = useState<"add" | "remove" | null>(null);
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const counts = sampleCounts(snap.org, snap.cases, snap.audit);
-  const present = counts.cases > 0 || counts.users > 0;
-  const onServer = snap.backend === "server";
-  const accounts = Object.values(snap.org.users).filter((u) => isSampleId(u.id));
-
-  const add = async () => {
-    if (!user || busy) return;
-    setBusy("add");
-    try {
-      const made = await addSampleData(user);
-      toast(`Added ${made.cases} sample cases and ${made.users} sample accounts`);
-    } catch {
-      toast("Could not add the sample data", "bad");
-    } finally { setBusy(null); }
-  };
-  const remove = async () => {
-    if (!user || busy) return;
-    setBusy("remove");
-    try {
-      const gone = await removeSampleData(user);
-      setConfirmRemove(false);
-      toast(`Removed ${gone.cases} sample cases and ${gone.users} sample accounts`);
-    } catch {
-      toast("Could not remove the sample data", "bad");
-    } finally { setBusy(null); }
-  };
-
-  return (
-    <Panel title="Sample data">
-      <div className="stack-sm small">
-        <p className="muted">
-          A self-contained demonstration set: {SAMPLE_SHAPE_SUMMARY.cases} cases spread across all {SAMPLE_SHAPE_SUMMARY.stages} stages
-          and every case status, {SAMPLE_SHAPE_SUMMARY.staff} staff accounts and {SAMPLE_SHAPE_SUMMARY.withSignIn} student sign-ins.
-          It fills the dashboards, charts, queues, registers and the audit log, so each role can be shown as it really reads.
-        </p>
-        {onServer ? (
-          <Notice tone="warn">Sample data is only available on browser storage. While a server is connected, accounts are issued by the identity provider, so generated sign-ins would not work.</Notice>
-        ) : (
-          <>
-            <Notice tone="info">Every sample record is tagged. Removing deletes only those records — any real cases, accounts and audit history in this workspace are left untouched.</Notice>
-            {present ? (
-              <>
-                <p>Present now: <b className="ui">{counts.cases}</b> cases, <b className="ui">{counts.users}</b> accounts, <b className="ui">{counts.audit}</b> audit entries.</p>
-                <p className="muted">Sign in as any of these with the password <b className="ui">{SAMPLE_PASSWORD}</b>:</p>
-                <ul className="stack-sm xs">
-                  {accounts.filter((u) => u.role !== "student").map((u) => (
-                    <li key={u.id}><b className="ui">{ROLE_WORD[u.role] ?? u.role}</b> — {u.email}</li>
-                  ))}
-                  {accounts.filter((u) => u.role === "student").slice(0, 1).map((u) => (
-                    <li key={u.id}><b className="ui">Student</b> — {u.email}{accounts.filter((x) => x.role === "student").length > 1 ? ` (and ${accounts.filter((x) => x.role === "student").length - 1} more)` : ""}</li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <p className="muted">No sample data is present.</p>
-            )}
-            <div className="flex wrap g2 mt2">
-              <button type="button" className="btn btn-secondary btn-sm" onClick={add} disabled={present || busy !== null}>
-                <FlaskConical aria-hidden />{busy === "add" ? "Adding…" : "Add sample data"}
-              </button>
-              <button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirmRemove(true)} disabled={!present || busy !== null}>
-                <Eraser aria-hidden />Remove sample data
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-      <Modal open={confirmRemove} onClose={() => setConfirmRemove(false)} title="Remove the sample data" width={460}>
-        <p className="small ink2">
-          This deletes the <b className="ui">{counts.cases}</b> sample cases, <b className="ui">{counts.users}</b> sample accounts and their audit entries.
-          Nothing else in the workspace is affected.
-        </p>
-        <div className="modal-f">
-          <button type="button" className="btn btn-secondary" onClick={() => setConfirmRemove(false)}>Cancel</button>
-          <button type="button" className="btn btn-danger" onClick={remove} disabled={busy !== null}>{busy === "remove" ? "Removing…" : "Remove sample data"}</button>
-        </div>
-      </Modal>
-    </Panel>
-  );
-}
-
-const ROLE_WORD: Record<string, string> = { admin: "Administrator", team_leader: "Team Leader", counsellor: "Counsellor", student: "Student" };
 
 /**
  * Connecting a server changes where every record lives and who may read it, so it is
