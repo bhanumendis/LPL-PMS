@@ -30,11 +30,14 @@ type Column struct {
 	Type ColType
 }
 
-// Table describes one table in the public schema.
+// Table describes one table in the public schema. Columns are what the REST surface serves;
+// Internal lists the columns the database keeps for itself (derived summaries, sort keys),
+// which no request may select, filter, order or write.
 type Table struct {
 	Name       string
 	PrimaryKey string
 	Columns    []Column
+	Internal   []string
 }
 
 // Column looks a column up by name.
@@ -58,10 +61,18 @@ var Tables = map[string]Table{
 		{Name: "phone", Type: Text}, {Name: "branch", Type: Text}, {Name: "role", Type: Text}, {Name: "active", Type: Boolean},
 		{Name: "created_at", Type: Timestamptz}, {Name: "created_by", Type: Text}, {Name: "last_sign_in_at", Type: Timestamptz},
 		{Name: "updated_at", Type: Timestamptz},
-	}},
+	}, Internal: []string{"name_key"}},
+	// The summary columns are derived from data by case_derive and read through cases_page.
 	"cases": {Name: "cases", PrimaryKey: "id", Columns: []Column{
 		{Name: "id", Type: Text}, {Name: "ref", Type: Text}, {Name: "status", Type: Text}, {Name: "counsellor_id", Type: Text},
 		{Name: "student_user_id", Type: Text}, {Name: "rev", Type: Integer}, {Name: "updated_at", Type: Timestamptz}, {Name: "data", Type: JSONB},
+	}, Internal: []string{
+		"student_name", "student_email", "created_at", "data_updated_at", "current_step", "stage", "progress_done", "progress_applicable",
+		"progress_pct", "gate_pending", "gate_pending_at", "gate_pending_round", "gate_returned", "docs_uploaded", "docs_accepted",
+		"docs_rejected", "profile_submitted", "cis_start_at", "cis2_from", "offer_lapse_at", "arrival_at", "hold_review_at",
+		"retention_anchor_at", "retention_kind", "disposed", "legal_hold", "last_event_at", "last_event_by", "destination", "channel",
+		"exit_code", "done_mask", "visa_granted", "cis_sent_at", "offer_decided_at", "profile_started", "consent_yes", "transfers_total",
+		"transfers_unsafeguarded", "has_clock", "needs_look", "search_text", "list_at", "gate_at",
 	}},
 	"audit": {Name: "audit", PrimaryKey: "id", Columns: []Column{
 		{Name: "id", Type: Text}, {Name: "at", Type: Timestamptz}, {Name: "actor_id", Type: Text}, {Name: "actor_name", Type: Text},

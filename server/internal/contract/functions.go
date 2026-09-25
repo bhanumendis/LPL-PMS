@@ -49,6 +49,15 @@ var Functions = map[string]Function{
 	"bootstrap_domains":  {Name: "bootstrap_domains"},
 	"can_manage_account": {Name: "can_manage_account", Params: []string{"p_target"}},
 	"is_group_it_email":  {Name: "is_group_it_email", Params: []string{"p_email"}},
+	// v6: paged reads and aggregates (one JSON argument each)
+	"cases_page":        {Name: "cases_page", Params: []string{"p"}, Types: []string{"jsonb"}, Set: true},
+	"cases_count":       {Name: "cases_count", Params: []string{"p"}, Types: []string{"jsonb"}},
+	"dashboard_summary": {Name: "dashboard_summary", Params: []string{"p"}, Types: []string{"jsonb"}},
+	"transfers_page":    {Name: "transfers_page", Params: []string{"p"}, Types: []string{"jsonb"}, Set: true},
+	"users_page":        {Name: "users_page", Params: []string{"p"}, Types: []string{"jsonb"}, Set: true},
+	"gates_page":        {Name: "gates_page", Params: []string{"p"}, Types: []string{"jsonb"}, Set: true},
+	"gate_stats":        {Name: "gate_stats"},
+	"change_versions":   {Name: "change_versions"},
 	// v6: case saves with revision check and an explicit "nothing was saved"
 	"save_case": {Name: "save_case", Params: []string{"p_id", "p_rev", "p_data"}, Types: []string{"text", "integer", "jsonb"}},
 }

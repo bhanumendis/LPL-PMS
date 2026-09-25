@@ -26,8 +26,22 @@ export function fmtMonth(v?: string): string {
   if (!y || !m) return v;
   return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("en-GB", { month: "short", year: "numeric" });
 }
-export function addDays(iso: string, days: number): Date { const d = new Date(iso); d.setDate(d.getDate() + days); return d; }
-export function addMonths(iso: string, months: number): Date { const d = new Date(iso); d.setMonth(d.getMonth() + months); return d; }
+/**
+ * Calendar arithmetic in UTC, the way the database does it (timestamptz + interval in UTC):
+ * whole days, and months that clamp to the end of a shorter month (31 January + 1 month is
+ * 28 or 29 February, not 3 March). Clocks computed here and in SQL therefore agree.
+ */
+export function addDays(iso: string, days: number): Date { const d = new Date(iso); d.setUTCDate(d.getUTCDate() + days); return d; }
+export function addMonths(iso: string, months: number): Date {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return d;
+  const day = d.getUTCDate();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + months);
+  const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, last));
+  return d;
+}
 export function daysUntil(d: Date): number { return Math.ceil((d.getTime() - Date.now()) / 86400000); }
 export function todayInput(): string { return new Date().toISOString().slice(0, 10); }
 
@@ -412,7 +426,8 @@ export function caseProgress(c: CaseRecord): Progress {
     applicable++;
     if (s === "done") done++;
   }
-  return { done, applicable, pct: applicable ? Math.round((done / applicable) * 100) : 0 };
+  // (done * 100) / applicable is exact at the half, as in the database; (done / applicable) * 100 is not.
+  return { done, applicable, pct: applicable ? Math.round((done * 100) / applicable) : 0 };
 }
 
 export function caseDestination(c: CaseRecord): string {
@@ -457,30 +472,39 @@ export function funnel(cases: CaseRecord[]): FunnelRow[] {
 export function countBy(cases: CaseRecord[], key: (c: CaseRecord) => string): { label: string; n: number }[] {
   const m = new Map<string, number>();
   cases.forEach((c) => { const k = key(c); m.set(k, (m.get(k) ?? 0) + 1); });
-  return [...m.entries()].map(([label, n]) => ({ label, n })).sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
+  // Ties break by code point, not locale, so the browser and the database order them identically.
+  return [...m.entries()].map(([label, n]) => ({ label, n })).sort((a, b) => b.n - a.n || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
 }
 
-export function monthKey(d: Date): string { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
+/**
+ * Reporting months are the organisation's months (Asia/Colombo), whatever the browser's time
+ * zone, so every viewer and the database bucket a case into the same month.
+ */
+export const ORG_TIME_ZONE = "Asia/Colombo";
+const MONTH_FMT = new Intl.DateTimeFormat("en-CA", { timeZone: ORG_TIME_ZONE, year: "numeric", month: "2-digit" });
 
-export function lastMonths(n: number): { key: string; label: string }[] {
+export function monthKey(d: Date): string { return MONTH_FMT.format(d).slice(0, 7); }
+
+export function lastMonths(n: number, now: number = Date.now()): { key: string; label: string }[] {
   const out: { key: string; label: string }[] = [];
-  const d = new Date(); d.setDate(1);
+  const [y, m] = monthKey(new Date(now)).split("-").map(Number);
   for (let i = n - 1; i >= 0; i--) {
-    const x = new Date(d.getFullYear(), d.getMonth() - i, 1);
-    out.push({ key: monthKey(x), label: x.toLocaleDateString("en-GB", { month: "short" }) });
+    const x = new Date(Date.UTC(y, m - 1 - i, 15));
+    out.push({ key: `${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(2, "0")}`, label: x.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" }) });
   }
   return out;
 }
 
-export function monthlyVolume(cases: CaseRecord[], months = 12): { labels: string[]; enquiries: number[]; arrivals: number[] } {
-  const ms = lastMonths(months);
+export function monthlyVolume(cases: CaseRecord[], months = 12, now: number = Date.now()): { labels: string[]; enquiries: number[]; arrivals: number[] } {
+  const ms = lastMonths(months, now);
   const enq = new Map(ms.map((m) => [m.key, 0]));
   const arr = new Map(ms.map((m) => [m.key, 0]));
   cases.forEach((c) => {
-    const k = monthKey(new Date(c.createdAt));
+    const created = new Date(c.createdAt);
+    const k = isNaN(created.getTime()) ? "" : monthKey(created);
     if (enq.has(k)) enq.set(k, (enq.get(k) ?? 0) + 1);
     const a = stepState(c, 30).values.arrivalDate;
-    if (typeof a === "string" && a) { const ak = monthKey(new Date(a)); if (arr.has(ak)) arr.set(ak, (arr.get(ak) ?? 0) + 1); }
+    if (typeof a === "string" && a && !isNaN(new Date(a).getTime())) { const ak = monthKey(new Date(a)); if (arr.has(ak)) arr.set(ak, (arr.get(ak) ?? 0) + 1); }
   });
   return { labels: ms.map((m) => m.label), enquiries: ms.map((m) => enq.get(m.key) ?? 0), arrivals: ms.map((m) => arr.get(m.key) ?? 0) };
 }
@@ -533,7 +557,7 @@ export function docStats(cases: CaseRecord[]): { uploaded: number; accepted: num
   const accepted = docs.filter((d) => d.status === "accepted").length;
   const rejected = docs.filter((d) => d.status === "rejected").length;
   const reviewed = accepted + rejected;
-  return { uploaded, accepted, rejected, reworkPct: reviewed ? Math.round((rejected / reviewed) * 100) : 0 };
+  return { uploaded, accepted, rejected, reworkPct: reviewed ? Math.round((rejected * 100) / reviewed) : 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -707,7 +731,7 @@ export function allTransfers(cases: CaseRecord[]): RegisterRow[] {
 export function consentCoverage(cases: CaseRecord[]): { covered: number; total: number; pct: number } {
   const reached = cases.filter((c) => !c.disposal && Object.keys(stepState(c, 2).values ?? {}).length > 0);
   const covered = reached.filter((c) => stepState(c, 2).values.consent === "Yes").length;
-  return { covered, total: reached.length, pct: reached.length ? Math.round((covered / reached.length) * 100) : 100 };
+  return { covered, total: reached.length, pct: reached.length ? Math.round((covered * 100) / reached.length) : 100 };
 }
 
 export function retentionSummary(cases: CaseRecord[], config: OrgConfig): Record<RetentionState, number> {

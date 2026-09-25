@@ -159,7 +159,7 @@ func reset(t *testing.T) {
 	t.Helper()
 	system(t, func(ctx context.Context, ex db.Executor) error {
 		for _, stmt := range []string{
-			"truncate public.cases, public.audit, public.prompts, public.org_config, public.app_users",
+			"truncate public.case_transfers, public.case_gates, public.dashboard_cache, public.cases, public.audit, public.prompts, public.org_config, public.app_users, public.notifications",
 			"delete from auth.users",
 			"select setval('public.case_ref_seq', 1, false)",
 			// A fresh database carries the organisation row (v6 write path).
@@ -639,10 +639,11 @@ func TestContractTablesMatchTheCatalogue(t *testing.T) {
 		system(t, func(ctx context.Context, ex db.Executor) error {
 			return ex.QueryRow(ctx, "select coalesce(array_agg(column_name::text order by ordinal_position), '{}') from information_schema.columns where table_schema = 'public' and table_name = $1::text", name).Scan(&cols)
 		})
-		want := make([]string, len(tb.Columns))
-		for i, c := range tb.Columns {
-			want[i] = c.Name
+		want := make([]string, 0, len(tb.Columns)+len(tb.Internal))
+		for _, c := range tb.Columns {
+			want = append(want, c.Name)
 		}
+		want = append(want, tb.Internal...)
 		if strings.Join(cols, ",") != strings.Join(want, ",") {
 			t.Errorf("%s: catalogue %v, contract %v", name, cols, want)
 		}
