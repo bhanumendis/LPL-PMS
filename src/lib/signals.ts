@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * One derivation of "what does this case need" shared by the rail, the dashboards, the
  * cases list, the dock badges and the notification reminders. Computed once per snapshot

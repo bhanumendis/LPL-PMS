@@ -1,7 +1,6 @@
 # Desktop responsiveness audit — 16 September 2026
 
-Copyright (c) 2026 Bhanu Mendis. All rights reserved.  
-Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+Developed by Bhanu Mendis - Group IT
 
 Raised as: the application "looks like a website that was made for a phone but is in a laptop".
 A multi-agent audit swept the shell, the four role dashboards, the dense tables and registers, the

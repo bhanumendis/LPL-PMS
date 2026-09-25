@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  */
 import type { CaseEvent, CaseRecord, DocItem, GateSubmission, OrgConfig, RetentionPolicy, StepState, TransferRecord, User } from "./types";
 import { EXIT_CODES, ORDERED_STEP_NUMBERS, PIPELINE, PLATFORM_COUNTRY, RETAINED_FIELDS, STEP_BY_N, TRANSFER_STEPS, pipelineOfStep, type PipelineStage } from "./spine";

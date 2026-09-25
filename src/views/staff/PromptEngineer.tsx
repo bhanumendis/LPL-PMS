@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Prompt Engineer Workspace. An isolated, Administrator-only area for authoring, previewing
  * and versioning prompt templates. Nothing here calls a model or any external API: the

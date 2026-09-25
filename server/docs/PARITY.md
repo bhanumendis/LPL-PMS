@@ -1,6 +1,6 @@
 # Parity: how we prove lpl-api behaves like Supabase did
 
-Copyright (c) 2026 Bhanu Mendis. All rights reserved.
+Copyright © Bhanu Mendis - LGH IT
 
 The frontend is the oracle: the same HTML file, driven the same way, must see the same
 answers from lpl-api as from Supabase. Three layers of evidence, cheapest first.

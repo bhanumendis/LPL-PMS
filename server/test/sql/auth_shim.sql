@@ -1,6 +1,5 @@
 -- Lyceum Placements — Placement Management System
--- Copyright (c) 2026 Bhanu Mendis. All rights reserved.
--- Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+-- Copyright © Bhanu Mendis - LGH IT
 --
 -- TEST-ONLY SHIM. The parts of Supabase's auth schema and roles that supabase/schema.sql
 -- depends on, so the schema can run on a plain Postgres (CI, a laptop). Every statement is

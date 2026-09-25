@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Lightweight chart components. All charts expose an accessible name and the underlying
  * numbers as text so nothing depends on colour alone. v5 adds hover and keyboard inspection

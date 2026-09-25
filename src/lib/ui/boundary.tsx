@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Region boundary: a failing page, rail or panel shows a recovery surface without taking
  * the shell down with it. The root ErrorBoundary in main.tsx remains the last resort.

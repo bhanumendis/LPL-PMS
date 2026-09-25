@@ -1,6 +1,6 @@
 # Phase 2 — Go façade: plan, decisions and status
 
-Copyright (c) 2026 Bhanu Mendis. All rights reserved. · 12 September 2026
+Copyright © Bhanu Mendis - LGH IT. · 12 September 2026
 
 Phase 1 (`LPL_PMS_Go_Migration_Phase1_Architecture_Audit_2026-09-11.md`) found that the
 "TypeScript backend" is one 126-line Edge Function plus 600 lines of SQL, and that the

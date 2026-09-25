@@ -1,0 +1,62 @@
+# Lyceum Placements — Placement Management System
+# Copyright © Bhanu Mendis - LGH IT
+#
+# Applies pending database migrations to production. Manual only, behind the production-db
+# environment (configure required reviewers), and dry-run unless asked otherwise. Every
+# migration is idempotent and records its version in public.schema_migrations; each runs in
+# its own transaction and the first failure stops the run. Take a backup first (Supabase:
+# Database → Backups, or point-in-time recovery). See docs/OPERATIONS.md.
+name: Migrate database
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Apply the pending migrations (unticked = list them only)
+        type: boolean
+        default: false
+      backup_confirmation:
+        description: 'To apply, type: I have a current backup'
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migrate
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: production-db
+    env:
+      DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preconditions
+        run: |
+          [ -n "$DATABASE_URL" ] || { echo "::error::PRODUCTION_DATABASE_URL is not set for the production-db environment"; exit 1; }
+          if [ "${{ inputs.apply }}" = "true" ] && [ "${{ inputs.backup_confirmation }}" != "I have a current backup" ]; then
+            echo "::error::Applying needs the backup confirmation."; exit 1
+          fi
+      - name: Pending migrations
+        id: pending
+        run: |
+          applied=$(psql "$DATABASE_URL" -tAc "select coalesce(string_agg(version, ' '), '') from public.schema_migrations" 2>/dev/null || echo "")
+          pending=""
+          for f in $(ls supabase/migrations/*.sql | sort); do
+            v=$(basename "$f" | cut -d_ -f1)
+            case " $applied " in *" $v "*) ;; *) pending="$pending $f" ;; esac
+          done
+          echo "files=$pending" >> "$GITHUB_OUTPUT"
+          if [ -z "$pending" ]; then echo "Nothing to apply."; else echo "Pending:"; for f in $pending; do echo "  $f"; done; fi
+      - name: Apply
+        if: inputs.apply && steps.pending.outputs.files != ''
+        run: |
+          for f in ${{ steps.pending.outputs.files }}; do
+            echo "::group::$f"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 --single-transaction -q -f "$f"
+            echo "::endgroup::"
+          done
+          psql "$DATABASE_URL" -tAc "select version || '  ' || name from public.schema_migrations order by version"

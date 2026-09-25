@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * The Team Leader's home: decisions waiting on me, exposure, the team's flow and load. Counts
  * come from the dashboard aggregate; the two queues are short pages read from the server (the

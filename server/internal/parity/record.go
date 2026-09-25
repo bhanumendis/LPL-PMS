@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 //
 // Package parity holds the golden-traffic format shared by cmd/lpl-record (which captures
 // what Supabase answers while the real frontend drives it) and test/contract (which replays

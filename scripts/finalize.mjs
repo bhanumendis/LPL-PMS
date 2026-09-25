@@ -1,3 +1,10 @@
+/**
+ * Lyceum Placements — Placement Management System
+ * Developed by Bhanu Mendis - Group IT
+ *
+ * Finishes the production build: sw.js beside the page, the Content-Security-Policy (inline
+ * scripts by hash, connect-src exactly the built-for API) and the banner.
+ */
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { build } from "esbuild";

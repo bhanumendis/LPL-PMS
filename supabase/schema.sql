@@ -9,7 +9,7 @@
 -- Existing project: run only the migration files newer than the latest version recorded in
 -- public.schema_migrations, in order. See docs/OPERATIONS.md.
 --
--- Migrations included: 20260901000000, 20260912000000, 20260925000100, 20260925000200, 20260925000300, 20260925000400
+-- Migrations included: 20260901000000, 20260912000000, 20260925000100, 20260925000200, 20260925000300, 20260925000400, 20260925000500
 
 begin;
 
@@ -18,8 +18,7 @@ begin;
 -- ===========================================================================
 
 -- Lyceum Placements — Placement Management System
--- Copyright (c) 2026 Bhanu Mendis. All rights reserved.
--- Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+-- Copyright © Bhanu Mendis - LGH IT
 --
 -- Supabase schema for LGH/IMS/PROC/LPL/001. Run once in the SQL editor of a new project;
 -- it is idempotent, so it can be re-run after an upgrade.
@@ -167,12 +166,12 @@ on conflict (perm) do update set roles = excluded.roles;
 
 -- Ownership notice stored with the objects themselves, so it is visible to anyone inspecting
 -- the database (Table Editor, psql \d+, pg_dump).
-comment on table public.org_config          is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. Organisation settings, permission matrix, case scope and standing processors.';
-comment on table public.app_users           is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. Staff and student profiles linked to auth.users.';
-comment on table public.cases               is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. One row per student case; the full record is in data.';
-comment on table public.audit               is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. Append-only, database-attributed activity log.';
-comment on table public.prompts             is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. Prompt Engineer Workspace templates (Administrator only).';
-comment on table public.permission_defaults is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. Standard permission model fallback.';
+comment on table public.org_config          is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Organisation settings, permission matrix, case scope and standing processors.';
+comment on table public.app_users           is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Staff and student profiles linked to auth.users.';
+comment on table public.cases               is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. One row per student case; the full record is in data.';
+comment on table public.audit               is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Append-only, database-attributed activity log.';
+comment on table public.prompts             is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Prompt Engineer Workspace templates (Administrator only).';
+comment on table public.permission_defaults is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Standard permission model fallback.';
 
 -- ---------------------------------------------------------------------------
 -- Helpers (SECURITY DEFINER so policies on app_users do not recurse)
@@ -623,8 +622,7 @@ grant usage on sequence public.case_ref_seq to authenticated;
 -- ===========================================================================
 
 -- Lyceum Placements — Placement Management System
--- Copyright (c) 2026 Bhanu Mendis. All rights reserved.
--- Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+-- Copyright © Bhanu Mendis - LGH IT
 --
 -- v5 additions: structured audit columns and paged audit RPCs; per-recipient notifications
 -- written by database triggers; Web Push subscriptions. Idempotent. The same block is appended
@@ -713,7 +711,7 @@ create table if not exists public.notifications (
 create index if not exists notifications_unread_idx    on public.notifications (recipient_id, at desc) where read_at is null;
 create index if not exists notifications_recipient_idx on public.notifications (recipient_id, at desc);
 create index if not exists notifications_push_idx      on public.notifications (at) where pushed_at is null;
-comment on table public.notifications is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. Per-recipient notifications written by database triggers.';
+comment on table public.notifications is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Per-recipient notifications written by database triggers.';
 
 create table if not exists public.push_subscriptions (
   id            text primary key default gen_random_uuid()::text,
@@ -727,7 +725,7 @@ create table if not exists public.push_subscriptions (
   revoked_at    timestamptz
 );
 create index if not exists push_subscriptions_user_idx on public.push_subscriptions (user_id);
-comment on table public.push_subscriptions is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. Web Push subscriptions, one row per device.';
+comment on table public.push_subscriptions is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Web Push subscriptions, one row per device.';
 
 -- Roles holding a matrix cell, from the configured matrix or the standard model; admin always.
 create or replace function public.roles_holding(perm text) returns text[]
@@ -3111,5 +3109,29 @@ begin
 end $$;
 
 insert into public.schema_migrations (version, name) values ('20260925000400', 'v6_workers') on conflict (version) do nothing;
+
+-- ===========================================================================
+-- 20260925000500_v6_attribution.sql
+-- ===========================================================================
+
+-- Lyceum Placements — Placement Management System
+-- Copyright © Bhanu Mendis - LGH IT
+--
+-- v6.5 — attribution. Idempotent.
+--
+-- The catalogue comments carry the backend attribution ("Copyright © Bhanu Mendis - LGH IT").
+-- The v4 and v5 files now write it for a fresh install; a database upgraded from v5 recorded
+-- those versions as applied, so it receives the same comments here.
+
+comment on table public.org_config          is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Organisation settings, permission matrix, case scope and standing processors.';
+comment on table public.app_users           is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Staff and student profiles linked to auth.users.';
+comment on table public.cases               is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. One row per student case; the full record is in data.';
+comment on table public.audit               is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Append-only, database-attributed activity log.';
+comment on table public.prompts             is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Prompt Engineer Workspace templates (SUPER ADMIN only).';
+comment on table public.permission_defaults is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Standard permission model fallback.';
+comment on table public.notifications is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Per-recipient notifications written by database triggers.';
+comment on table public.push_subscriptions is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Web Push subscriptions, one row per device.';
+
+insert into public.schema_migrations (version, name) values ('20260925000500', 'v6_attribution') on conflict (version) do nothing;
 
 commit;

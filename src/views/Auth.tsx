@@ -1,11 +1,10 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  */
 import React, { useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { useSession, LiveBadge, Copyright, ThemeToggle, useDocumentTitle, APP_VERSION } from "@/App";
+import { useSession, LiveBadge, Attribution, ThemeToggle, useDocumentTitle, APP_VERSION } from "@/App";
 import { EVENTS } from "@/lib/audit";
 import { store, hashPassword, uid, nowIso, passwordProblem, MIN_PASSWORD_LENGTH, DEV_GROUP_IT_DOMAINS } from "@/lib/store";
 import { isGroupItEmail } from "@/lib/rbac";
@@ -46,7 +45,7 @@ export function AuthScreen() {
           </div>
           {setup ? <SignInForm /> : <SetupAdmin />}
           <div className="flex aic jcb wrap g2 mt4">
-            <Copyright />
+            <Attribution />
             <span className="ui xs muted">v{APP_VERSION}</span>
           </div>
         </div>

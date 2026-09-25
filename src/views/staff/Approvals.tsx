@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Approvals (Team Leader gates) and Escalations. Both read pages from the server: the pending
  * queue and the flagged cases as case summaries, decisions from the gate register, figures

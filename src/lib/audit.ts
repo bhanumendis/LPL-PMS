@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Typed audit events. Every builder keeps the v4 `action` label, `target` and `detail` so
  * exports and history stay continuous, and adds the structured columns the explorer filters

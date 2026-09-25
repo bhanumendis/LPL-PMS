@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 // Integration suite: lpl-api in front of a real Postgres running supabase/schema.sql.
 //
 // Set TEST_DATABASE_URL (and optionally TEST_JWT_SECRET) to run it. The suite applies the

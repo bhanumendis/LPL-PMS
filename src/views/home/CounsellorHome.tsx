@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * The counsellor's home: what needs me now, where my caseload stands, what moved. The figures
  * are the dashboard over the counsellor's own cases; the queue is the head the dashboard names

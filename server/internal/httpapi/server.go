@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 //
 // Package httpapi serves the wire contract the single-file frontend already speaks
 // (src/lib/server.ts): the PostgREST subset on /rest/v1, GoTrue on /auth/v1 (proxied), and
@@ -38,6 +37,9 @@ type Deps struct {
 	Logger *slog.Logger
 	// AuthProxy overrides the GoTrue reverse proxy (tests). Built from Config when nil.
 	AuthProxy http.Handler
+	// Revision is the source revision the binary was built from (GET /version), so a deploy
+	// can tell the new release is the one answering. Empty reads "dev".
+	Revision string
 }
 
 // Server holds the handlers.
@@ -49,6 +51,7 @@ type Server struct {
 	log       *slog.Logger
 	authProxy http.Handler
 	limits    map[string]*ratelimit.Limiter
+	revision  string
 }
 
 // New validates the dependencies and builds a Server.
@@ -59,7 +62,7 @@ func New(d Deps) (*Server, error) {
 	if d.Resolver == nil {
 		return nil, errors.New("httpapi: Resolver is required")
 	}
-	s := &Server{cfg: d.Config, runner: d.Runner, resolver: d.Resolver, gotrue: d.GoTrue, log: d.Logger, authProxy: d.AuthProxy,
+	s := &Server{cfg: d.Config, runner: d.Runner, resolver: d.Resolver, gotrue: d.GoTrue, log: d.Logger, authProxy: d.AuthProxy, revision: d.Revision,
 		limits: map[string]*ratelimit.Limiter{
 			"auth":  ratelimit.New(d.Config.RateAuthPerMinute),
 			"admin": ratelimit.New(d.Config.RateAdminPerMinute),
@@ -92,6 +95,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /readyz", s.readyz)
+	mux.HandleFunc("GET /version", s.version)
 	mux.HandleFunc("POST /rest/v1/rpc/{fn}", s.rpc)
 	mux.HandleFunc("GET /rest/v1/{table}", s.selectRows)
 	mux.HandleFunc("POST /rest/v1/{table}", s.upsertRows)

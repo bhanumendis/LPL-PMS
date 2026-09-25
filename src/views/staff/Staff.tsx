@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  */
 import React, { useMemo, useState } from "react";
 import { Plus, KeyRound, UserRoundX, UserRoundCheck, Download, ShieldCheck, Search } from "lucide-react";

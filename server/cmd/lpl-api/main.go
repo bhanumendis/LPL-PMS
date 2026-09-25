@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 //
 // lpl-api serves the Placement Management System's backend contract in place of Supabase's
 // request path: /rest/v1 (data), /auth/v1 (proxied to GoTrue) and
@@ -28,6 +27,9 @@ import (
 	"lpl-api/internal/workers"
 )
 
+// revision is set at build time: -ldflags "-X main.revision=<git sha>" (see Dockerfile).
+var revision string
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg, err := config.Load()
@@ -52,6 +54,7 @@ func main() {
 		Resolver: auth.NewVerifier(cfg.AnonKey, cfg.JWTSecret, cfg.JWKSURL, cfg.JWTLeeway),
 		GoTrue:   gotrue.NewClient(cfg.GoTrueURL, cfg.ServiceRoleKey),
 		Logger:   logger,
+		Revision: revision,
 	})
 	if err != nil {
 		logger.Error("server", "error", err.Error())
@@ -97,7 +100,7 @@ func main() {
 		_ = hs.Shutdown(shutdownCtx)
 	}()
 
-	logger.Info("lpl-api listening", "addr", cfg.ListenAddr, "env", cfg.Env, "gotrue", cfg.GoTrueURL, "simple_protocol", cfg.DBSimpleProtocol,
+	logger.Info("lpl-api listening", "revision", revision, "addr", cfg.ListenAddr, "env", cfg.Env, "gotrue", cfg.GoTrueURL, "simple_protocol", cfg.DBSimpleProtocol,
 		"cors_origins", cfg.CORSAllowOrigins, "workers", cfg.Workers, "push", cfg.Workers && cfg.VAPIDPublicKey != "")
 	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("listen", "error", err.Error())

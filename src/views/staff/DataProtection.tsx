@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Retention schedule and cross-border transfer register.
  * Closes absences 2 and 3 of process document LGH/IMS/PROC/LPL/001 §10, and feeds the

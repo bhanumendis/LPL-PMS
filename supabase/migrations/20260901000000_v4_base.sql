@@ -1,6 +1,5 @@
 -- Lyceum Placements — Placement Management System
--- Copyright (c) 2026 Bhanu Mendis. All rights reserved.
--- Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+-- Copyright © Bhanu Mendis - LGH IT
 --
 -- Supabase schema for LGH/IMS/PROC/LPL/001. Run once in the SQL editor of a new project;
 -- it is idempotent, so it can be re-run after an upgrade.
@@ -148,12 +147,12 @@ on conflict (perm) do update set roles = excluded.roles;
 
 -- Ownership notice stored with the objects themselves, so it is visible to anyone inspecting
 -- the database (Table Editor, psql \d+, pg_dump).
-comment on table public.org_config          is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. Organisation settings, permission matrix, case scope and standing processors.';
-comment on table public.app_users           is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. Staff and student profiles linked to auth.users.';
-comment on table public.cases               is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. One row per student case; the full record is in data.';
-comment on table public.audit               is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. Append-only, database-attributed activity log.';
-comment on table public.prompts             is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. Prompt Engineer Workspace templates (Administrator only).';
-comment on table public.permission_defaults is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. Standard permission model fallback.';
+comment on table public.org_config          is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Organisation settings, permission matrix, case scope and standing processors.';
+comment on table public.app_users           is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Staff and student profiles linked to auth.users.';
+comment on table public.cases               is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. One row per student case; the full record is in data.';
+comment on table public.audit               is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Append-only, database-attributed activity log.';
+comment on table public.prompts             is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Prompt Engineer Workspace templates (Administrator only).';
+comment on table public.permission_defaults is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Standard permission model fallback.';
 
 -- ---------------------------------------------------------------------------
 -- Helpers (SECURITY DEFINER so policies on app_users do not recurse)

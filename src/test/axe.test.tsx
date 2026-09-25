@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Automated WCAG 2.1 A/AA checks with axe-core over the rendered shell and the main screens
  * for every role, in both themes. Colour contrast is excluded here because jsdom does not

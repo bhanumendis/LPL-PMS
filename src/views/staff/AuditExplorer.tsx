@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Audit explorer: a filtered, keyset-paginated view of the append-only audit log. Rows carry
  * the narrow columns; the field-level diff is read on demand when a row is opened.

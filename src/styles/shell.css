@@ -1,4 +1,4 @@
-/*! Lyceum Placements - Placement Management System | Copyright (c) 2026 Bhanu Mendis. All rights reserved. | Author: Bhanu Mendis, Group IT, Lyceum Global Holdings */
+/*! Lyceum Placements - Placement Management System | Developed by Bhanu Mendis - Group IT */
 /* v5 application shell: utility bar, floating dock, page frame, rail slot, mobile tab bar. */
 
 #root { position: relative; z-index: var(--z-page); min-height: 100vh; }

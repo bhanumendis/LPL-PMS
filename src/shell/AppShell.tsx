@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * One shell for every role: the utility bar with the floating dock, the routed page, the
  * counsellor rail (Stage 5), the mobile tab bar, and the layers (notification center,

@@ -1,0 +1,123 @@
+# Lyceum Placements — Placement Management System
+# Copyright © Bhanu Mendis - LGH IT
+#
+# Manual rollback (or roll-forward) to a commit that has already passed CI on main: the API is
+# re-pointed at that commit's published image and the web application is rebuilt from it.
+# Nothing is rebuilt for the API, so what runs is exactly what passed the gates. See
+# docs/OPERATIONS.md. Database migrations are additive and are never rolled back here.
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full commit SHA on main to restore (its CI run must have passed)
+        required: true
+      target:
+        description: What to restore
+        type: choice
+        options: [both, api, web]
+        default: both
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rollback
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: The commit passed CI on main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be a full 40-character commit SHA"; exit 1; }
+          ok=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=$SHA&branch=main&event=push&status=success" --jq '.total_count')
+          [ "$ok" -gt 0 ] || { echo "::error::$SHA has no successful CI run on main; refusing to deploy it"; exit 1; }
+
+  api:
+    name: Restore lpl-api
+    needs: verify
+    if: inputs.target != 'web'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.API_URL }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      API_URL: ${{ vars.API_URL }}
+      ANON_KEY: ${{ vars.VITE_API_ANON_KEY }}
+      DEPLOY_HOOK: ${{ secrets.API_DEPLOY_HOOK }}
+      EXPECT_REVISION: ${{ inputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: name
+        run: echo "image=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/lpl-api" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Promote
+        env:
+          IMAGE: ${{ steps.name.outputs.image }}
+        run: scripts/deploy/promote.sh "$IMAGE:sha-${{ inputs.sha }}"
+      - name: Smoke test
+        run: scripts/deploy/smoke-api.sh
+
+  web:
+    name: Restore the web application
+    needs: [verify, api]
+    if: always() && needs.verify.result == 'success' && inputs.target != 'api' && needs.api.result != 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Build
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_API_ANON_KEY: ${{ vars.VITE_API_ANON_KEY }}
+          LPL_CONNECT_SRC: ${{ vars.LPL_CONNECT_SRC }}
+        run: npx vite build && node scripts/finalize.mjs
+      - name: Stage the site
+        run: |
+          mkdir -p site
+          cp dist/index.html dist/LPL_Placement_Management_System.html dist/sw.js site/
+          touch site/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
+      - name: Smoke test
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+        run: |
+          # The restored commit may predate the smoke script; use the one on main.
+          git fetch --depth=1 origin main && git show origin/main:scripts/deploy/smoke-web.sh > /tmp/smoke-web.sh
+          bash /tmp/smoke-web.sh

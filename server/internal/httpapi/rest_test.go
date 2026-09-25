@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 package httpapi
 
 import (
@@ -264,6 +263,17 @@ func TestPreflightNeedsNoApikey(t *testing.T) {
 	h := rec.Header()
 	if h.Get("Access-Control-Allow-Origin") != "*" || !strings.Contains(h.Get("Access-Control-Allow-Headers"), "apikey") || !strings.Contains(h.Get("Access-Control-Allow-Headers"), "prefer") {
 		t.Fatalf("cors headers %v", h)
+	}
+}
+
+func TestVersionNamesTheBuildWithoutAKey(t *testing.T) {
+	rec := newEnv(t, func(d *Deps) { d.Revision = "abc123" }).do(http.MethodGet, "/version", "", "", map[string]string{"apikey": ""})
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"revision":"abc123"}` {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	rec = newEnv(t).do(http.MethodGet, "/version", "", "", map[string]string{"apikey": ""})
+	if !strings.Contains(rec.Body.String(), `"dev"`) {
+		t.Fatalf("unset revision: %s", rec.Body.String())
 	}
 }
 

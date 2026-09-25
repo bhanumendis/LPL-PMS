@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * The counsellor's student rail. Always minimised to a slim strip on the left edge: one
  * progress ring per assigned student. Pressing the launcher (or any ring) slides the full

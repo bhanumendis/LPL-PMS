@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 // Golden replay: re-issues traffic recorded from a Supabase project (cmd/lpl-record)
 // against lpl-api on a fresh database and diffs the answers.
 //

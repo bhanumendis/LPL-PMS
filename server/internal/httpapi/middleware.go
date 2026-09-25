@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 package httpapi
 
 import (
@@ -257,7 +256,7 @@ func maxBody(next http.Handler, n int64) http.Handler {
 // the service key) in the apikey header or query parameter. The error bodies are Kong's.
 func (s *Server) apikeyGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/version" {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * The navigation model. Destinations are declared once and rendered by the dock, the mobile
  * tab bar, the command palette and the document title. Routes are unchanged from v4.

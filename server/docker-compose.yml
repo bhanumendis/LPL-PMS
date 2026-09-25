@@ -1,5 +1,5 @@
 # Lyceum Placements — Placement Management System
-# Copyright (c) 2026 Bhanu Mendis. All rights reserved.
+# Copyright © Bhanu Mendis - LGH IT
 #
 # Local stack that is faithful to production: Supabase's Postgres image (roles and the auth
 # schema included), GoTrue for identity, and lpl-api in front. Not yet exercised on a real

@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 //
 // Package gotrue is the small client for GoTrue's admin API that the admin-users handler
 // needs: create a user, set a password, ban or unban. It authenticates with the service

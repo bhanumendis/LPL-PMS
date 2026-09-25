@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Performance: funnel, volume over time, service levels, mix. Below the fold, collapsible,
  * remembered per browser. Gated by analytics.read exactly as the v4 overview was. Every figure

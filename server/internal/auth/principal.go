@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 //
 // Package auth resolves the caller of a request to a Postgres role and a set of JWT
 // claims, exactly as PostgREST does: the bearer token decides everything, and the

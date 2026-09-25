@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Layer: a popover anchored to its trigger on wide screens, a bottom sheet on phones. Opens
  * from the anchor's corner (transform-origin), traps focus, closes on Escape and outside click.

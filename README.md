@@ -2,7 +2,7 @@
 
 Production build of the Placement Management System for Lyceum Placements (Private) Limited.
 React 18 + Vite 5 + TypeScript, built as a single HTML file, backed by Supabase.
-Copyright (c) 2026 Bhanu Mendis. All rights reserved.
+Developed by Bhanu Mendis - Group IT
 Built on process document LGH/IMS/PROC/LPL/001: 31 process steps, presented as 9 stages, with Team Leader gates at steps 16 and 19 and three tracked service level clocks (CIS, offer lapse, follow-up).
 
 ## Build
@@ -45,7 +45,7 @@ There is no sample or seed data anywhere in the build. A new workspace starts em
 | `server/` | **lpl-api** (Go): serves `/rest/v1`, `/auth/v1` and `/functions/v1/admin-users` in place of Supabase's request path, and runs the background work (Web Push delivery, service-level reminders, the shared dashboard, notification retention) that Edge Functions and pg_cron did before v6. See `server/README.md` |
 | `.github/workflows/pages.yml` | Builds and publishes the test site to GitHub Pages on every push to `main` |
 | `.github/workflows/server.yml` | Builds and tests `server/` against a Postgres carrying `supabase/schema.sql` |
-| `LICENSE` | Ownership notice, all rights reserved |
+| `LICENSE` | Ownership and licence terms |
 
 ## Application shell
 
@@ -188,16 +188,16 @@ Remotes on the development machine: `personal` → `bhanumendis/LPL-PMS` (test s
 
 ## Ownership notice
 
-The copyright is recorded in every layer so that anyone inspecting the product, the source or the database sees it:
+The attribution is recorded in every layer so that anyone inspecting the product, the source or the database sees it: "Developed by Bhanu Mendis - Group IT" on the frontend and "Copyright © Bhanu Mendis - LGH IT" on the backend. `node scripts/check-attribution.mjs` (run in CI) fails a source file that lacks its form, and any file that still carries the old reserved-rights line.
 
 | Where | How |
 |---|---|
-| Every source file (`.ts`, `.tsx`, `.css`, `.sql`, `.mjs`, `.yml`) | Header comment |
+| Every source file (`.ts`, `.tsx`, `.css`, `.sql`, `.go`, `.sh`, `.mjs`, `.yml`) | Header comment, frontend or backend form |
 | Built HTML | Banner comment at the top, `<meta name="author">` and `<meta name="copyright">` |
 | Minified JavaScript inside the built HTML | `/*! @license */` block preserved by the bundler (`esbuild.legalComments: "inline"`) |
 | Running application | `window.__LPL_PMS__` object and a console notice on start |
 | Database | `COMMENT ON TABLE` on every table in `supabase/schema.sql`, visible in the Table Editor, `psql \d+` and `pg_dump` |
-| Repository | `LICENSE` (all rights reserved) and `package.json` `author` / `license: UNLICENSED` |
+| Repository | `LICENSE` and `package.json` `author` / `license: UNLICENSED` |
 
 ## The nine stages
 

@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  */
 import { useEffect, useRef, useState } from "react";
 import { Check, ShieldCheck, Send, Save, RotateCcw, Minus, Lock, Clock } from "lucide-react";

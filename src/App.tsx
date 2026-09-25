@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Moon, Sun } from "lucide-react";
@@ -205,7 +204,7 @@ export function Wordmark({ size = "md", sub = true, stacked = false }: { size?: 
   );
 }
 
-export function Copyright({ className = "" }: { className?: string }) {
+export function Attribution({ className = "" }: { className?: string }) {
   return <span className={`ui xs muted ${className}`}>{ATTRIBUTION}</span>;
 }
 
