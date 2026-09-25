@@ -182,6 +182,17 @@ textarea.input.code { font-family: var(--mono); font-size: 13px; line-height: 1.
 .auth-side .foot { font-family: var(--ui); font-size: var(--fs-xs); color: var(--auth-muted); display: flex; flex-direction: column; gap: 6px; }
 .auth-main { display: flex; align-items: center; justify-content: center; padding: 40px 28px; }
 .auth-card { width: 100%; max-width: 560px; border-radius: var(--r-xl); padding: 30px 32px 28px; }
+/* Entrance: a whisper, not a show. The card settles in, the side's three blocks follow in
+   sequence and its glow warms up; opacity and transform only, once, and not at all under
+   reduced motion. */
+@keyframes auth-settle { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes auth-glow { from { opacity: 0; } to { opacity: 1; } }
+.auth-card { animation: auth-settle 560ms cubic-bezier(0.22, 1, 0.36, 1) 60ms backwards; }
+.auth-side::before { animation: auth-glow 1200ms ease-out backwards; }
+.auth-side > * { animation: auth-settle 520ms cubic-bezier(0.22, 1, 0.36, 1) backwards; }
+.auth-side > :nth-child(2) { animation-delay: 90ms; }
+.auth-side > :nth-child(3) { animation-delay: 180ms; }
+@media (prefers-reduced-motion: reduce) { .auth-card, .auth-side::before, .auth-side > * { animation: none; } }
 @media (max-width: 767px) {
   .auth { grid-template-columns: 1fr; }
   .auth-side { padding: 26px 22px; }
@@ -193,7 +204,6 @@ textarea.input.code { font-family: var(--mono); font-size: 13px; line-height: 1.
 
 /* ---------- ring hero (student) ---------- */
 .hero { display: grid; grid-template-columns: 180px 1fr; gap: 26px; align-items: center; }
-@media (max-width: 640px) { .hero { grid-template-columns: 1fr; justify-items: center; text-align: center; } .hero .hero-txt { align-items: center; } }
 .hero .hero-txt { display: flex; flex-direction: column; gap: 8px; }
 .hero h2 { font-size: 24px; }
 .next-box { padding: 14px 16px; border-radius: 14px; background: var(--bg2); border: 1px solid var(--hair); font-size: var(--fs-sm); }
@@ -203,6 +213,14 @@ textarea.input.code { font-family: var(--mono); font-size: 13px; line-height: 1.
   .spine { display: none; position: static; max-height: none; margin-top: 10px; }
   .spine.open { display: block; }
   .hero { grid-template-columns: 140px 1fr; }
+}
+/* After the 1023px rule, which would otherwise win at every narrower width too. */
+@media (max-width: 640px) {
+  .hero { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+  .hero .hero-txt { align-items: center; }
+  .hero .hero-txt .flex { justify-content: center; }
+  /* Nine stage names cannot share a phone's width; the hero above already names the stage. */
+  .hero-card .stage-track .seg-lbl { display: none; }
 }
 
 /* ---------- filter bars ---------- */
@@ -219,7 +237,9 @@ textarea.input.code { font-family: var(--mono); font-size: 13px; line-height: 1.
   .filters.cols-3, .filters.cols-2, .filters.cols-register, .filters.cols-audit { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .filters .f-search { grid-column: 1 / -1; }
 }
-@media (max-width: 639px) {
+/* Phones keep the selects two-up (the search spans the row): a filter bar is not a whole
+   screen of stacked controls before the first result. */
+@media (max-width: 359px) {
   .filters.cols-3, .filters.cols-2, .filters.cols-register { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -414,3 +434,114 @@ textarea.input.code { font-family: var(--mono); font-size: 13px; line-height: 1.
 }
 .home-greeting h1 { background: linear-gradient(90deg, var(--ink), color-mix(in srgb, var(--hue-indigo-text) 70%, var(--ink))); -webkit-background-clip: text; background-clip: text; color: transparent; }
 @media (forced-colors: active) { .home-page::before { display: none; } .home-greeting h1 { background: none; color: CanvasText; } }
+
+/* ===========================================================================
+   v6 responsive pass (docs/2026-09-16-desktop-responsiveness-audit.md, "Outstanding").
+   Every rule below is a min-width counterpart to an existing max-width cluster, or scoped
+   to one component, so nothing narrower than its breakpoint changes.
+   =========================================================================== */
+
+/* Cases: nine columns that fit a laptop's panel. Cells wrap rather than each claiming a
+   floor, so the whole row (Updated included) is visible from 1280px; below that the panel
+   scrolls sideways, as before. */
+.tbl-cases { min-width: max(100%, 1060px); }
+.tbl-cases th, .tbl-cases td { padding-inline: 12px; }
+.tbl-cases td:nth-child(2) { min-width: 150px; }
+.tbl-cases td:nth-child(4) { min-width: 180px; }
+.tbl-cases td:nth-child(8) { max-width: 230px; }
+.tbl-cases td:nth-child(8) .sev-chip { white-space: normal; border-radius: 10px; line-height: 1.3; padding-block: 3px; }
+
+/* Audit log: the range switch and the four filters share a row on a desktop. The 680px
+   basis is the filter grid's min-content (200 + 3 × 150 + gaps). */
+@media (min-width: 1280px) {
+  .audit-filters { flex-direction: row; flex-wrap: wrap; align-items: center; column-gap: 12px; }
+  .audit-filters > .segmented { flex: 0 0 auto; }
+  .audit-filters > .filters.cols-audit { flex: 1 1 680px; }
+}
+/* Audit rows: spend the width on a field (the detail) rather than a longer summary line. */
+.audit-extra { display: none; }
+@media (min-width: 1280px) {
+  .audit-row-btn { grid-template-columns: 150px minmax(160px, 1fr) minmax(0, 3fr) minmax(0, 2fr) auto 18px; }
+  .audit-extra { display: block; min-width: 0; }
+}
+
+/* Staff: the accounts table (eight columns and up to three row actions) takes the width;
+   the role donut sits beside it only where both fit, below it otherwise. */
+.staff-grid { grid-template-columns: minmax(0, 1fr) clamp(300px, 22%, 380px); align-items: start; }
+.staff-grid > .staff-main { min-width: 0; }
+@media (max-width: 1599px) {
+  .staff-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .staff-grid > .staff-main { grid-column: 1 / -1; }
+}
+@media (max-width: 640px) {
+  .staff-grid { grid-template-columns: 1fr; }
+  .staff-grid > .staff-main { grid-column: auto; }
+}
+
+/* Journey: nine short stage rows pack two-up on a desktop; the open stage takes the row. */
+@media (min-width: 1280px) {
+  .journey-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; align-items: start; }
+  .journey-list > .journey-stage[open] { grid-column: 1 / -1; }
+}
+/* A step's status sits beside its title instead of at the far edge of a 1200px row. */
+@media (min-width: 1024px) {
+  .j-step-head { display: grid; grid-template-columns: minmax(0, 360px) max-content; justify-content: start; align-items: baseline; column-gap: 20px; }
+}
+
+/* Staff homes: Performance (a three-column analytics grid) gets its own full-width row
+   instead of 230px charts in the main column beside an emptying side column. */
+.home > .perf { grid-column: 1 / -1; min-width: 0; }
+
+/* The compliance strip is the only stat strip in the side column: its tiles stack into rows
+   there instead of three 174px columns with labels on three lines. */
+@media (min-width: 1024px) {
+  .home-side .stat-strip { grid-auto-flow: row; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .home-side .stat-strip .stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .home-side .stat + .stat::before { display: none; }
+}
+
+/* Student home: short facts in as many columns as fit, not a two-column form grid. */
+.home-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: 12px 20px; margin: 0; }
+.home-facts dd { overflow-wrap: anywhere; }
+
+/* Student hero: "Coming next" beside the status text on a desktop, not a 1000px-wide box
+   under it. The box spans the four text rows (all always rendered). */
+@media (min-width: 1280px) {
+  .hero .hero-txt { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); column-gap: 24px; row-gap: 8px; align-content: start; }
+  .hero .hero-txt > *:not(.next-box) { grid-column: 1; }
+  .hero .hero-txt > .next-box { grid-column: 2; grid-row: 1 / span 4; align-self: start; }
+  .hero .hero-txt > p { max-width: 72ch; }
+}
+
+/* Student documents: the two checklists sit side by side once both fit. */
+.doc-columns { display: grid; gap: 18px; }
+.doc-columns > * { min-width: 0; }
+@media (min-width: 1280px) { .doc-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; } }
+
+/* Case timeline: who and when beside the event on a desktop (the workspace only; the
+   student home's narrow "Recent updates" keeps the stacked form). */
+@media (min-width: 1280px) {
+  .workspace .tl-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; column-gap: 20px; }
+  .workspace .tl-body .who { text-align: right; white-space: nowrap; }
+}
+
+/* Case header: the actions' column widens so Hold, Defer, Exit and Export sit on one row and
+   the counsellor's name is not cut; the middle column still has ~580px at 1280. */
+@media (min-width: 1280px) {
+  .case-head-grid { grid-template-columns: auto minmax(0, 1fr) minmax(320px, 420px); gap: 24px; }
+}
+
+/* Headers scale with the screen, in two steps, so a 1366 laptop, a 1920 monitor and a 2560
+   display differ; the case title reaches the display size of the home greeting. */
+@media (min-width: 1280px) {
+  .case-head { padding: 26px 30px; }
+  .case-head-id h1 { font-size: 28px; }
+  .hero-card { padding: 30px 34px; }
+  .hero h2 { font-size: 26px; }
+}
+@media (min-width: 1680px) {
+  .case-head { padding: 30px 36px; }
+  .case-head-id h1 { font-size: 32px; }
+  .hero-card { padding: 34px 40px; }
+  .hero h2 { font-size: 28px; }
+}

@@ -12,7 +12,7 @@ import { EVENTS, type AuditEvent } from "@/lib/audit";
 import { runViewTransition } from "@/lib/motion";
 import type { CaseRecord, Permission, User } from "@/lib/types";
 import { ToastProvider, useToast } from "@/lib/ui";
-import { BRAND_LOGO, COPYRIGHT, ORG_SHORT, PRODUCT } from "@/lib/brand";
+import { BRAND_LOGO, ATTRIBUTION, ORG_SHORT, PRODUCT } from "@/lib/brand";
 import { AuthScreen } from "@/views/Auth";
 import { AppShell } from "@/shell/AppShell";
 import { ShellSkeleton } from "@/shell/ShellSkeleton";
@@ -206,7 +206,7 @@ export function Wordmark({ size = "md", sub = true, stacked = false }: { size?: 
 }
 
 export function Copyright({ className = "" }: { className?: string }) {
-  return <span className={`ui xs muted ${className}`}>{COPYRIGHT}</span>;
+  return <span className={`ui xs muted ${className}`}>{ATTRIBUTION}</span>;
 }
 
 export function LiveBadge() {

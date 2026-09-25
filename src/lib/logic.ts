@@ -16,6 +16,12 @@ export function fmtDate(iso?: string | null): string {
   if (isNaN(d.getTime())) return String(iso);
   return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
+export function fmtTime(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? "" : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
 export function fmtDateTime(iso?: string): string {
   if (!iso) return "—";
   const d = new Date(iso);

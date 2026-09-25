@@ -14,3 +14,10 @@ npm-debug.log*
 # client end-to-end harness (scripts/e2e-api.sh)
 .e2e-lpl-api
 .e2e-lpl-api.log
+
+# browser suite (scripts/e2e-ui.sh)
+.e2e-ui-manifest.json
+test-results/
+playwright-report/
+.e2e-gotrue.log
+.e2e-ui-web.log

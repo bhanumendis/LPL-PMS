@@ -48,9 +48,9 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
 }
 
 // The notice survives minification and is visible to any developer opening the console or the source.
-declare global { interface Window { __LPL_PMS__?: { product: string; copyright: string; author: string } } }
-window.__LPL_PMS__ = { product: "Lyceum Placements - Placement Management System", copyright: "Copyright (c) 2026 Bhanu Mendis. All rights reserved.", author: "Bhanu Mendis, Group IT, Lyceum Global Holdings" };
-console.info("%cLyceum Placements - Placement Management System\n%cCopyright (c) 2026 Bhanu Mendis. All rights reserved.", "font-weight:600", "font-weight:400");
+declare global { interface Window { __LPL_PMS__?: { product: string; attribution: string } } }
+window.__LPL_PMS__ = { product: "Lyceum Placements - Placement Management System", attribution: "Developed by Bhanu Mendis - Group IT" };
+console.info("%cLyceum Placements - Placement Management System\n%cDeveloped by Bhanu Mendis - Group IT", "font-weight:600", "font-weight:400");
 
 installGlobalErrorHandlers();
 

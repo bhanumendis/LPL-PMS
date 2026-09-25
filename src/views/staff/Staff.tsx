@@ -93,8 +93,8 @@ export function StaffPage() {
         { id: "tl", label: "Team Leaders", value: staff.filter((u) => u.role === "team_leader" && u.active).length, tone: "info", sub: "approval authority" },
         { id: "admins", label: "Administrators", value: staff.filter((u) => isPrivileged(u.role) && u.active).length, sub: "Admin and Super Admin" },
       ]} />
-      <div className="grid grid-3 stagger">
-        <div className="span2 stack">
+      <div className="grid staff-grid stagger">
+        <div className="staff-main stack">
           <div className="seg" role="tablist" aria-label="Account type">
             <button type="button" role="tab" aria-selected={tab === "staff"} onClick={() => setTab("staff")}>Staff accounts</button>
             <button type="button" role="tab" aria-selected={tab === "students"} onClick={() => setTab("students")}>Student accounts</button>
@@ -138,8 +138,8 @@ export function StaffPage() {
                       <td><Pill tone={u.active ? "ok" : "bad"}>{u.active ? "Active" : "Deactivated"}</Pill></td>
                       <td className="right nowrap">
                         {acts(u).role && tab === "staff" && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRoleFor(u)} aria-label={`Change role of ${u.name}`}><ShieldCheck aria-hidden />Role</button>}
-                        {acts(u).password && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPasswordFor(u)}><KeyRound aria-hidden />Set temporary password</button>}
-                        {acts(u).active && <button type="button" className={`btn btn-sm ${u.active ? "btn-danger-ghost" : "btn-ghost"}`} onClick={() => toggle(u)}>{u.active ? <><UserRoundX aria-hidden />Deactivate</> : <><UserRoundCheck aria-hidden />Reactivate</>}</button>}
+                        {acts(u).password && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPasswordFor(u)} aria-label={`Set a temporary password for ${u.name}`}><KeyRound aria-hidden />Password</button>}
+                        {acts(u).active && <button type="button" className={`btn btn-sm ${u.active ? "btn-danger-ghost" : "btn-ghost"}`} onClick={() => toggle(u)} aria-label={`${u.active ? "Deactivate" : "Reactivate"} ${u.name}`}>{u.active ? <><UserRoundX aria-hidden />Deactivate</> : <><UserRoundCheck aria-hidden />Reactivate</>}</button>}
                         {!acts(u).password && !acts(u).active && !acts(u).role && <span className="muted" aria-label={isPrivileged(u.role) ? "Managed by Super Admin" : "No actions"}>{isPrivileged(u.role) && user?.role !== "super_admin" ? "Super Admin managed" : "—"}</span>}
                       </td>
                     </tr>

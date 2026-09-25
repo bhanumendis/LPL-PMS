@@ -198,7 +198,7 @@ function CaseWorkspaceView({ caseId }: { caseId: string }) {
               <h1>{c.student.name}</h1>
               <Pill tone={statusTone(c.status)}>{STATUS_LABEL[c.status]}</Pill>
             </div>
-            <p className="ui small muted mt1">{c.ref} · opened {fmtDate(c.createdAt)} · {caseDestination(c)} · {caseProgramme(c)}</p>
+            <p className="ui small muted mt1">{[c.ref, `opened ${fmtDate(c.createdAt)}`, caseDestination(c), caseProgramme(c)].filter((x) => x !== "—").join(" · ")}</p>
             <p className="case-contact ui small mt1">
               <a href={`mailto:${c.student.email}`}><Mail aria-hidden />{c.student.email}</a>
               <a href={`tel:${c.student.phone}`}><Phone aria-hidden />{c.student.phone}</a>

@@ -12,7 +12,7 @@ import { useSession } from "@/App";
 import { store, uid, nowIso, hashPassword, passwordProblem } from "@/lib/store";
 import { caseScopeOf } from "@/lib/rbac";
 import { PIPELINE, STEP_BY_N, DESTINATIONS } from "@/lib/spine";
-import { fmtDateTime, newCaseRef, mkEvent, todayInput, daysSince } from "@/lib/logic";
+import { fmtDate, fmtTime, newCaseRef, mkEvent, todayInput, daysSince } from "@/lib/logic";
 import { useRowSignals, type CaseSignals } from "@/lib/signals";
 import { BP, SEARCH_MIN, useDebounced, useMediaQuery } from "@/lib/hooks";
 import { useCaseCount, useCasePage, useDashboard } from "@/lib/useRead";
@@ -28,7 +28,7 @@ function AttentionChips({ s }: { s?: CaseSignals }) {
   return (
     <span className="flex aic wrap g1">
       <SeverityChip severity={top.severity}>{top.label}</SeverityChip>
-      {rest.length > 0 && <span className="ui xs muted" title={rest.map((a) => a.label).join(" · ")}>+{rest.length} more</span>}
+      {rest.length > 0 && <span className="ui xs muted nowrap" title={rest.map((a) => a.label).join(" · ")}>+{rest.length} more<span className="sr-only">: {rest.map((a) => a.label).join("; ")}</span></span>}
     </span>
   );
 }
@@ -137,9 +137,9 @@ export function CasesPage() {
         />
       ) : (
         <div className="panel table-wrap" aria-busy={page.refreshing}>
-          <table className="tbl" style={{ minWidth: 1180 }}>
+          <table className="tbl tbl-cases">
             <thead>
-              <tr><th scope="col" style={{ minWidth: 140 }}>Reference</th><th scope="col" style={{ minWidth: 200 }}>Student</th><th scope="col">Destination</th><th scope="col" style={{ minWidth: 220 }}>Current step</th><th scope="col">Progress</th><th scope="col" style={{ minWidth: 170 }}>Counsellor</th><th scope="col">Status</th><th scope="col">Attention</th><th scope="col">Updated</th></tr>
+              <tr><th scope="col">Reference</th><th scope="col">Student</th><th scope="col">Destination</th><th scope="col">Current step</th><th scope="col">Progress</th><th scope="col">Counsellor</th><th scope="col">Status</th><th scope="col">Attention</th><th scope="col">Updated</th></tr>
             </thead>
             <tbody>
               {page.rows.map((c) => {
@@ -160,7 +160,7 @@ export function CasesPage() {
                     </td>
                     <td><Pill tone={statusTone(c.status)}>{STATUS_LABEL[c.status]}</Pill></td>
                     <td><AttentionChips s={s} /></td>
-                    <td className="muted nowrap">{c.updatedAt ? fmtDateTime(c.updatedAt) : "—"}</td>
+                    <td className="muted">{c.updatedAt ? <><p className="nowrap">{fmtDate(c.updatedAt)}</p><p className="sub nowrap">{fmtTime(c.updatedAt)}</p></> : "—"}</td>
                   </tr>
                 );
               })}

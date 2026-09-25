@@ -180,6 +180,7 @@ export function AuditExplorer() {
                           <span className="ui small">{e.summary ?? e.action}</span>
                           {e.summary && e.summary !== e.action && <span className="xs muted">{e.action}</span>}
                         </span>
+                        <span className="audit-extra ui xs muted truncate">{e.detail ?? ""}</span>
                         <span className="audit-chips">
                           {e.eventType ? (e.entityLabel || e.entityType) && <Pill tone="navy">{e.entityType ? ENTITY_TYPE_LABEL[e.entityType] : ""}{e.entityLabel ? `${e.entityType ? " · " : ""}${e.entityLabel}` : ""}</Pill> : <Pill>Legacy</Pill>}
                           {e.outcome === "failure" && <Pill tone="bad">Failed</Pill>}

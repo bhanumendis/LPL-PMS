@@ -9,7 +9,7 @@ import { useSession, LiveBadge, Copyright, ThemeToggle, useDocumentTitle, APP_VE
 import { EVENTS } from "@/lib/audit";
 import { store, hashPassword, uid, nowIso, passwordProblem, MIN_PASSWORD_LENGTH, DEV_GROUP_IT_DOMAINS } from "@/lib/store";
 import { isGroupItEmail } from "@/lib/rbac";
-import { BRAND_LOGO, COPYRIGHT, ORG_SHORT, PRODUCT, DOC_REF } from "@/lib/brand";
+import { BRAND_LOGO, ATTRIBUTION, ORG_SHORT, PRODUCT, DOC_REF } from "@/lib/brand";
 import { Notice, useToast, TextField } from "@/lib/ui";
 import type { User } from "@/lib/types";
 
@@ -35,7 +35,7 @@ export function AuthScreen() {
         </div>
         <div className="foot">
           <span>Built on {DOC_REF}</span>
-          <span>{COPYRIGHT}</span>
+          <span>{ATTRIBUTION}</span>
         </div>
       </aside>
       <main className="auth-main" id="main">

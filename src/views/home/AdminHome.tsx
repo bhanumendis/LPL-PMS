@@ -69,7 +69,6 @@ export function AdminHome() {
           <Panel title="Counsellor load" action={can("staff.read") ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => go({ page: "staff" })}>Staff <ArrowRight aria-hidden /></button> : undefined}>
             <CounsellorLoad counsellors={counsellors} load={d.counsellors} />
           </Panel>
-          <PerformanceSection dashboard={d} canRead={can("analytics.read")} canDownload={can("analytics.download")} onExport={() => { downloadText("lpl-overview.csv", overviewCsv(d)); void audit(EVENTS.overviewExported()); }} scope="team" />
         </div>
         <div className="home-side">
           {can("dataprotection.view") && <section aria-label="Compliance"><h2 className="side-h">Compliance</h2><ComplianceStrip dashboard={d} config={config} /></section>}
@@ -82,6 +81,7 @@ export function AdminHome() {
             </Panel>
           )}
         </div>
+        <PerformanceSection dashboard={d} canRead={can("analytics.read")} canDownload={can("analytics.download")} onExport={() => { downloadText("lpl-overview.csv", overviewCsv(d)); void audit(EVENTS.overviewExported()); }} scope="team" />
       </div>
     </div>
   );

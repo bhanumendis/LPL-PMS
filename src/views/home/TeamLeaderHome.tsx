@@ -85,7 +85,6 @@ export function TeamLeaderHome() {
               )}
             </Panel>
           )}
-          <PerformanceSection dashboard={d} canRead={can("analytics.read")} canDownload={can("analytics.download")} onExport={() => { downloadText("lpl-overview.csv", overviewCsv(d)); void audit(EVENTS.overviewExported()); }} scope="team" />
         </div>
         <div className="home-side">
           <Panel title="Open cases by stage">
@@ -95,6 +94,7 @@ export function TeamLeaderHome() {
             <CounsellorLoad counsellors={counsellors} load={d.counsellors} />
           </Panel>
         </div>
+        <PerformanceSection dashboard={d} canRead={can("analytics.read")} canDownload={can("analytics.download")} onExport={() => { downloadText("lpl-overview.csv", overviewCsv(d)); void audit(EVENTS.overviewExported()); }} scope="team" />
       </div>
     </div>
   );

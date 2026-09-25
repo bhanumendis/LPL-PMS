@@ -103,6 +103,9 @@ code, kbd, pre { font-family: var(--mono); }
 .page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 14px; margin-bottom: 20px; }
 .page-head p { color: var(--muted); margin-top: 4px; max-width: 72ch; }
 .page-head .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* The title claims a real width before the actions do, so on a phone the actions wrap below
+   it instead of squeezing the heading into a column a word wide. */
+.page-head > .grow { flex: 1 1 20rem; }
 .icon-btn {
   width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--hair2); background: var(--glass-strong);
   display: inline-grid; place-items: center; color: var(--ink); transition: transform var(--t-fast) var(--spring), box-shadow var(--t-fast), border-color var(--t-fast);

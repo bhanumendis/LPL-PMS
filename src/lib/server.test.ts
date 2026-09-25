@@ -65,6 +65,34 @@ describe("server adapter writes", () => {
       body: { p_endpoint: "https://fcm.googleapis.com/fcm/send/x", p_p256dh: "k", p_auth: "a", p_user_agent: "UA" } });
   });
 
+  it("keeps the session when the identity provider is down, and ends it only when it refuses the token", async () => {
+    const tok = ["h", btoa(JSON.stringify({ sub: "auth-1" })), "s"].join(".");
+    localStorage.setItem("lpl:pms:server-session", JSON.stringify({ accessToken: tok, refreshToken: "r", expiresAt: Date.now() + 3_600_000 }));
+    respond = () => new Response("bad gateway", { status: 502 });
+    const b = backend();
+    expect(await b.currentAuthId()).toBe("auth-1");
+    expect(b.signedIn).toBe(true);
+    respond = () => { throw new TypeError("Failed to fetch"); };
+    expect(await b.currentAuthId()).toBe("auth-1");
+    respond = () => new Response("{}", { status: 401 });
+    expect(await b.currentAuthId()).toBeNull();
+    expect(b.signedIn).toBe(false);
+  });
+
+  it("refreshes an expiring token, keeps it through an outage and drops it when refused", async () => {
+    const soon = () => localStorage.setItem("lpl:pms:server-session", JSON.stringify({ accessToken: "t", refreshToken: "r", expiresAt: Date.now() + 10_000 }));
+    soon();
+    respond = (c) => (c.url.startsWith("/auth/v1/token") ? new Response("down", { status: 503 }) : Response.json([]));
+    let b = backend();
+    await b.listPushSubscriptions("u1");
+    expect(b.signedIn).toBe(true);
+    soon();
+    respond = (c) => (c.url.startsWith("/auth/v1/token") ? Response.json({ error: "invalid_grant" }, { status: 400 }) : Response.json([]));
+    b = backend();
+    await b.listPushSubscriptions("u1").catch(() => undefined);
+    expect(b.signedIn).toBe(false);
+  });
+
   it("patches only the profile columns that changed and inserts new profiles", async () => {
     const before: OrgState = { config: defaultConfig(), users: { u1: user("u1") } };
     const after: OrgState = { config: defaultConfig(), users: { u1: user("u1", { phone: "0771234567" }), u2: user("u2", { role: "student" }) } };

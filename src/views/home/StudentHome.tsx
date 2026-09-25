@@ -32,7 +32,7 @@ export function StudentHome({ c }: { c: CaseRecord }) {
 
   return (
     <div className="stack home-page">
-      <PageHeader className="home-greeting" title={greeting(user?.name ?? c.student.name)} context={<>{c.ref} · {caseDestination(c)} · {caseProgramme(c)} · opened {fmtDate(c.createdAt)}</>} actions={<Pill tone={statusTone(c.status)}>{STATUS_LABEL[c.status]}</Pill>} />
+      <PageHeader className="home-greeting" title={greeting(user?.name ?? c.student.name)} context={[c.ref, caseDestination(c), caseProgramme(c), `opened ${fmtDate(c.createdAt)}`].filter((x) => x !== "—").join(" · ")} actions={<Pill tone={statusTone(c.status)}>{STATUS_LABEL[c.status]}</Pill>} />
       {c.status === "hold" && <Notice tone="warn">Your application is on hold{c.hold?.reviewDate ? ` and will be reviewed on ${fmtDate(c.hold.reviewDate)}` : ""}. Your counsellor will contact you.</Notice>}
       {c.status === "deferred" && <Notice tone="gold">Your intake has been deferred{c.hold?.intake ? ` to ${fmtMonth(c.hold.intake)}` : ""}. Your counsellor will contact you ahead of the new intake.</Notice>}
       {c.status === "exited" && <Notice tone="neutral">This application is closed. Contact Lyceum Placements if you would like to reopen it.</Notice>}
@@ -47,7 +47,7 @@ export function StudentHome({ c }: { c: CaseRecord }) {
           </Panel>
           {facts.length > 0 && (
             <Panel title="Key details">
-              <dl className="form-grid">{facts.map((f) => <div key={f.label}><dt className="ui xs muted">{f.label}</dt><dd className="ui small" style={{ margin: 0 }}>{f.value}</dd></div>)}</dl>
+              <dl className="home-facts">{facts.map((f) => <div key={f.label}><dt className="ui xs muted">{f.label}</dt><dd className="ui small" style={{ margin: 0 }}>{f.value}</dd></div>)}</dl>
             </Panel>
           )}
         </div>

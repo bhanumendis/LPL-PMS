@@ -201,3 +201,17 @@ html[data-theme="dark"] .skeleton::after { background: linear-gradient(90deg, tr
 .role-choice.on { border-color: var(--accent); background: var(--accent-soft); }
 .role-choice.disabled { opacity: 0.55; cursor: not-allowed; }
 @media (forced-colors: active) { .role-choice.on { outline: 2px solid Highlight; } }
+
+/* ---------- stat strip: desktop scale (v6 responsive pass) ---------- */
+/* The four-tile strip owns the full page width on every staff home; from 1280px its type
+   and padding step up so a 320px tile is not a phone card with dead space beside it. The
+   compact side-column strip keeps its scale. */
+@media (min-width: 1280px) {
+  .stat-strip:not(.compact) .stat { padding: 18px 22px; gap: 6px; }
+  .stat-strip:not(.compact) .stat + .stat::before { top: 18px; bottom: 18px; }
+  .stat-strip:not(.compact) .stat.hued::after { left: 22px; }
+  .stat-strip:not(.compact) .stat-label { font-size: 13.5px; }
+  .stat-strip:not(.compact) .stat-value { font-size: 36px; }
+  .stat-strip:not(.compact) .stat-delta,
+  .stat-strip:not(.compact) .stat-sub { font-size: 12.5px; }
+}

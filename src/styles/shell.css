@@ -23,7 +23,11 @@ html[data-theme="dark"] .brand img { background: #fff; border-radius: 9px; paddi
 }
 .topbar.scrolled { background: var(--float); -webkit-backdrop-filter: blur(18px) saturate(150%); backdrop-filter: blur(18px) saturate(150%); border-bottom-color: var(--surface-border); box-shadow: var(--e-1); }
 .topbar.no-dock { grid-template-columns: auto 1fr auto; }
-.topbar-l { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.topbar-l { display: flex; align-items: center; gap: 12px; min-width: 0; container: topbar-l / inline-size; }
+/* The product name shows only where it fits whole: it never slides under the dock or a
+   context chip, and it is never cut mid-word. */
+@container topbar-l (max-width: 330px) { .brand-sub { display: none; } }
+@container topbar-l (max-width: 480px) { .topbar-l:has(.ctx-chip) .brand-sub { display: none; } }
 .topbar-l .brand img { height: 30px; }
 html[data-theme="dark"] .topbar-l .brand img { height: 34px; }
 .topbar-c { display: flex; justify-content: center; min-width: 0; z-index: var(--z-dock); }

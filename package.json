@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.sw.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.sw.json && tsc --noEmit -p tsconfig.node.json",
     "contrast": "node scripts/contrast.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -18,7 +18,9 @@
     "verify": "npm run typecheck && npm run lint && npm run test && npm run contrast",
     "build": "npm run verify && vite build && node scripts/finalize.mjs",
     "preview": "vite preview",
-    "parity:update": "vite-node scripts/update-parity.ts"
+    "parity:update": "vite-node scripts/update-parity.ts",
+    "test:e2e": "scripts/e2e-api.sh",
+    "test:ui": "scripts/e2e-ui.sh"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
@@ -26,10 +28,13 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@eslint/js": "^9.39.5",
+    "@playwright/test": "1.56.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.3",
+    "@types/node": "22.20.4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
@@ -43,5 +48,10 @@
     "vite": "^5.4.11",
     "vite-plugin-singlefile": "^2.0.3",
     "vitest": "^3.2.7"
+  },
+  "overrides": {
+    "@axe-core/playwright": {
+      "playwright-core": "1.56.1"
+    }
   }
 }

@@ -38,7 +38,7 @@ export function JourneyPage({ c }: { c: CaseRecord }) {
   return (
     <div className="stack">
       <PageHeader title="Journey" context="Every step from enquiry to arrival, with what has been completed so far." actions={<Pill tone="neutral">Stage {current.n} of 9 · {p.done} of {p.applicable} steps recorded</Pill>} />
-      <div className="stack-sm">
+      <div className="stack-sm journey-list">
         {PIPELINE.map((s) => {
           const pr = prog.find((x) => x.id === s.id)!;
           const holdsStep = (n: number | null | undefined) => n != null && s.steps.includes(n);
@@ -58,7 +58,7 @@ export function JourneyPage({ c }: { c: CaseRecord }) {
                     <li key={n} className={`j-step ${d}`}>
                       <span className="s-ico" aria-hidden="true">{d === "done" ? <Check /> : null}</span>
                       <div className="grow" style={{ minWidth: 0 }}>
-                        <div className="flex wrap aic jcb g2">
+                        <div className="j-step-head flex wrap aic jcb g2">
                           <span className={d === "active" ? "ui strong" : "ui"}>{def.studentTitle}</span>
                           <span className="ui xs muted">{d === "done" ? fmtDate(st.completedAt) : d === "na" ? "Not required" : d === "active" ? (def.studentAction ? "Action needed" : def.gate ? "Under internal review" : "In progress") : ""}</span>
                         </div>

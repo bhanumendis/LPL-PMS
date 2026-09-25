@@ -28,8 +28,10 @@ export function DocumentsPage({ c }: { c: CaseRecord }) {
   return (
     <div className="stack">
       <PageHeader title="Documents" context="Everything you upload is reviewed by your counsellor. Accepted documents are shared with universities and visa authorities as required." />
+      <div className="doc-columns">
       {section(10, d10, "University application documents", "Required for your applications.", "Your counsellor will open this list once your programme and destination are confirmed and the document checklist has been issued.")}
       {section(15, d15, "Visa file documents", "Required for financial verification and your visa file.", "Your counsellor will open this list once an offer has been received.")}
+      </div>
     </div>
   );
 }

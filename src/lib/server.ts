@@ -128,12 +128,17 @@ class Client {
   private async refresh(): Promise<void> {
     const rt = this.session?.refreshToken;
     if (!rt) return;
-    const res = await fetch(`${this.cfg.url}/auth/v1/token?grant_type=refresh_token`, {
-      method: "POST", headers: { apikey: this.cfg.anonKey, "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: rt }),
-    });
-    if (!res.ok) { this.setSession(null); return; }
-    this.setSession(await res.json() as GoTrueToken);
+    let res: Response;
+    try {
+      res = await fetch(`${this.cfg.url}/auth/v1/token?grant_type=refresh_token`, {
+        method: "POST", headers: { apikey: this.cfg.anonKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: rt }),
+      });
+    } catch { return; } // unreachable: keep the session and try again on the next request
+    if (res.ok) { this.setSession(await res.json() as GoTrueToken); return; }
+    // Only the identity provider refusing the refresh token ends the session; a 5xx or a
+    // rate limit is its problem, not a sign-out.
+    if (res.status >= 400 && res.status < 500 && res.status !== 429) this.setSession(null);
   }
 
   private setSession(tok: GoTrueToken | null): void {
@@ -183,10 +188,13 @@ class Client {
     if (!this.session) return null;
     await this.ensureFresh();
     if (!this.session) return null;
-    const res = await fetch(`${this.cfg.url}/auth/v1/user`, { headers: this.headers(false) });
-    if (!res.ok) { this.setSession(null); return null; }
-    const u = await res.json() as { id: string };
-    return u.id;
+    let res: Response | null = null;
+    try { res = await fetch(`${this.cfg.url}/auth/v1/user`, { headers: this.headers(false) }); } catch { /* unreachable */ }
+    if (res?.ok) return (await res.json() as { id: string }).id;
+    if (res && (res.status === 401 || res.status === 403)) { this.setSession(null); return null; }
+    // The identity provider is down or unreachable. The token's subject stands in: it grants
+    // nothing here, since the API verifies the token on every request anyway.
+    return this.tokenSubject;
   }
 
   // ---- administrator-only account management (lpl-api; the service role stays on the server) ----
