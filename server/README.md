@@ -15,10 +15,12 @@ speaks (`src/lib/server.ts`) in place of Supabase's request path:
 The Edge Functions' source was removed from the repository in v6 (it is in the git history
 before that commit); nothing calls them once the browser talks to lpl-api.
 
-**Status (12 September 2026):** builds with Go 1.27.1; `go vet`, `staticcheck` and
-`govulncheck` are clean; every unit suite passes. The integration suite and the golden
-replay have not run yet: there is no Postgres on the build machine and no Supabase project
-exists. See `docs/PHASE2_PLAN.md`.
+**Status (25 September 2026, v6):** builds with the pinned Go toolchain (`go.mod`,
+`toolchain go1.26.8`); gofmt, `go vet`, staticcheck and govulncheck run in CI; the unit,
+integration (row-level security, paging, parity with the TypeScript reference, workers) and
+migration suites pass against Postgres 16 under `-race`, and the client and browser
+end-to-end suites run against this binary. It has not yet served a live Supabase project:
+`docs/CUTOVER.md` is the path to production. `GET /version` reports the build's revision.
 
 ## Layout
 
@@ -43,7 +45,7 @@ docs/              plan, ADR, parity and cutover notes
 
 Not present on purpose: `pkg/` (no external consumers), a repository layer (the façade is
 the data layer), domain packages (business rules stay where they are today, in the browser
-and in the SQL guards), migrations (`supabase/schema.sql` stays canonical), typed case
+and in the SQL guards), migrations (they live in `supabase/migrations/`), typed case
 documents (`cases.data` passes through as opaque JSON).
 
 ## Build and test

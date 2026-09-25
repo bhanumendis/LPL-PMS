@@ -8,8 +8,9 @@
 name: CI
 
 on:
+  # Pull requests run the gates on their branch; pushes to main run them again and deploy.
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
