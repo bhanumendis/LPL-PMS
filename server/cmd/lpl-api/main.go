@@ -54,11 +54,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	go srv.RunBackground(ctx)
+
 	hs := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       cfg.RequestTimeout + 10*time.Second,
+		WriteTimeout:      cfg.RequestTimeout + 10*time.Second,
 		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    64 << 10,
+		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 	}
 	go func() {
 		<-ctx.Done()
@@ -67,7 +73,7 @@ func main() {
 		_ = hs.Shutdown(shutdownCtx)
 	}()
 
-	logger.Info("lpl-api listening", "addr", cfg.ListenAddr, "gotrue", cfg.GoTrueURL, "simple_protocol", cfg.DBSimpleProtocol)
+	logger.Info("lpl-api listening", "addr", cfg.ListenAddr, "env", cfg.Env, "gotrue", cfg.GoTrueURL, "simple_protocol", cfg.DBSimpleProtocol, "cors_origins", cfg.CORSAllowOrigins)
 	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("listen", "error", err.Error())
 		os.Exit(1)

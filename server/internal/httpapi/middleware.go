@@ -9,8 +9,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -102,24 +105,128 @@ func logging(next http.Handler, log *slog.Logger) http.Handler {
 	})
 }
 
-// cors answers preflights itself and stamps every response, as the Supabase gateway does.
-// The built single file may be opened from disk, which sends "Origin: null"; "*" admits it.
-func cors(next http.Handler, origin string) http.Handler {
+// securityHeaders stamps every response. The API only ever returns JSON or plain text, so
+// nothing it serves may be framed, sniffed into another type, cached or run as a document.
+func securityHeaders(next http.Handler, hsts bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Access-Control-Allow-Origin", origin)
-		h.Set("Access-Control-Allow-Headers", "authorization, x-client-info, apikey, content-type, prefer, range, x-request-id")
-		h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-		h.Set("Access-Control-Expose-Headers", "content-range, content-type, x-request-id")
-		h.Set("Access-Control-Max-Age", "86400")
-		if origin != "*" {
-			h.Add("Vary", "Origin")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		h.Set("Cache-Control", "no-store")
+		if hsts {
+			h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// cors admits the configured origins only. A response to any other origin carries no CORS
+// headers, so the browser refuses to hand it to the page; a preflight from one is refused
+// outright. Requests without an Origin (servers, curl, health probes) pass unchanged.
+func cors(next http.Handler, allowed []string) http.Handler {
+	wildcard := false
+	set := map[string]bool{}
+	for _, o := range allowed {
+		if o == "*" {
+			wildcard = true
+		}
+		set[o] = true
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		h := w.Header()
+		h.Add("Vary", "Origin")
+		ok := origin != "" && (wildcard || set[origin])
+		if ok {
+			if wildcard {
+				h.Set("Access-Control-Allow-Origin", "*")
+			} else {
+				h.Set("Access-Control-Allow-Origin", origin)
+			}
+			h.Set("Access-Control-Allow-Headers", "authorization, x-client-info, apikey, content-type, prefer, range, x-request-id")
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+			h.Set("Access-Control-Expose-Headers", "content-range, content-type, x-request-id, retry-after")
+			h.Set("Access-Control-Max-Age", "86400")
 		}
 		if r.Method == http.MethodOptions {
+			if origin != "" && !ok {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// clientIP is the TCP peer, or the address the nearest trusted proxy recorded when the
+// service runs behind hops proxies that append to X-Forwarded-For.
+func clientIP(r *http.Request, hops int) string {
+	if hops > 0 {
+		var parts []string
+		for _, v := range r.Header.Values("X-Forwarded-For") {
+			for _, p := range strings.Split(v, ",") {
+				if p = strings.TrimSpace(p); p != "" {
+					parts = append(parts, p)
+				}
+			}
+		}
+		if len(parts) >= hops {
+			return parts[len(parts)-hops]
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// limitClass decides which budget a request spends. Token refreshes are not counted as
+// sign-in attempts: every open tab refreshes hourly, and they cannot guess a password.
+func limitClass(r *http.Request) string {
+	p := r.URL.Path
+	switch {
+	case r.Method == http.MethodPost && p == "/auth/v1/token" && r.URL.Query().Get("grant_type") == "password",
+		r.Method == http.MethodPost && (p == "/auth/v1/signup" || p == "/auth/v1/recover" || p == "/auth/v1/otp"):
+		return "auth"
+	case strings.HasPrefix(p, "/functions/v1/"):
+		return "admin"
+	case strings.HasPrefix(p, "/rest/v1/"):
+		return "api"
+	}
+	return ""
+}
+
+// rateLimit answers 429 with Retry-After in the shape the endpoint's client expects.
+func (s *Server) rateLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		class := limitClass(r)
+		l := s.limits[class]
+		if l == nil || r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ip := clientIP(r, s.cfg.TrustedProxyHops)
+		ok, wait := l.Allow(class + "|" + ip)
+		if ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		secs := int(wait/time.Second) + 1
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		s.log.Warn("rate limited", "request_id", RequestID(r.Context()), "class", class, "client_ip", ip, "path", r.URL.Path)
+		switch class {
+		case "auth":
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{"code": 429, "error_code": "over_request_rate_limit", "msg": "Too many attempts. Wait a minute and try again."})
+		case "admin":
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "Too many requests. Wait a minute and try again."})
+		default:
+			writePostgrest(w, http.StatusTooManyRequests, "PGRST429", "Too many requests. Wait a minute and try again.", "", "")
+		}
 	})
 }
 

@@ -13,11 +13,13 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"lpl-api/internal/auth"
 	"lpl-api/internal/config"
 	"lpl-api/internal/db"
 	"lpl-api/internal/gotrue"
+	"lpl-api/internal/ratelimit"
 )
 
 // TokenResolver turns an Authorization header into a principal (see auth.Verifier).
@@ -46,6 +48,7 @@ type Server struct {
 	gotrue    gotrue.Admin
 	log       *slog.Logger
 	authProxy http.Handler
+	limits    map[string]*ratelimit.Limiter
 }
 
 // New validates the dependencies and builds a Server.
@@ -56,7 +59,12 @@ func New(d Deps) (*Server, error) {
 	if d.Resolver == nil {
 		return nil, errors.New("httpapi: Resolver is required")
 	}
-	s := &Server{cfg: d.Config, runner: d.Runner, resolver: d.Resolver, gotrue: d.GoTrue, log: d.Logger, authProxy: d.AuthProxy}
+	s := &Server{cfg: d.Config, runner: d.Runner, resolver: d.Resolver, gotrue: d.GoTrue, log: d.Logger, authProxy: d.AuthProxy,
+		limits: map[string]*ratelimit.Limiter{
+			"auth":  ratelimit.New(d.Config.RateAuthPerMinute),
+			"admin": ratelimit.New(d.Config.RateAdminPerMinute),
+			"api":   ratelimit.New(d.Config.RateAPIPerMinute),
+		}}
 	if s.log == nil {
 		s.log = slog.Default()
 	}
@@ -96,11 +104,22 @@ func (s *Server) Handler() http.Handler {
 	h = s.apikeyGate(h)
 	h = maxBody(h, s.cfg.MaxBodyBytes)
 	h = withTimeout(h, s.cfg.RequestTimeout)
-	h = cors(h, s.cfg.CORSAllowOrigin)
+	h = s.rateLimit(h)
+	h = cors(h, s.cfg.CORSAllowOrigins)
+	h = securityHeaders(h, s.cfg.HSTS)
 	h = logging(h, s.log)
 	h = recoverer(h, s.log)
 	h = requestID(h)
 	return h
+}
+
+// RunBackground runs the server's housekeeping until ctx is done: it sweeps idle
+// rate-limit buckets so memory follows the number of recently active clients.
+func (s *Server) RunBackground(ctx context.Context) {
+	for _, l := range s.limits {
+		go l.RunSweeper(ctx, time.Minute)
+	}
+	<-ctx.Done()
 }
 
 // principal resolves the caller for a /rest request, answering 401 in PostgREST's shape on

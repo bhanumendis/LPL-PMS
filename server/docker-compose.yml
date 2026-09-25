@@ -67,7 +67,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (32+ characters)}
       ANON_KEY: ${ANON_KEY:?mint with lpl-dbtool}
       SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:?mint with lpl-dbtool}
-      CORS_ALLOW_ORIGIN: "*"
+      APP_ENV: development
+      CORS_ALLOW_ORIGINS: "*"
     ports:
       - "8080:8080"
 

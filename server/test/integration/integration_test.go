@@ -67,7 +67,7 @@ func TestMain(m *testing.M) {
 	srv, err := httpapi.New(httpapi.Deps{
 		Config: config.Config{
 			AnonKey: "anon-key", ServiceRoleKey: "service-key", GoTrueURL: "http://gotrue.invalid",
-			MaxBodyBytes: 10 << 20, RequestTimeout: 30 * time.Second, CORSAllowOrigin: "*",
+			MaxBodyBytes: 10 << 20, RequestTimeout: 30 * time.Second, CORSAllowOrigins: []string{"*"},
 		},
 		Runner:   pool,
 		Resolver: auth.NewVerifier("anon-key", secret, "", 0),
@@ -223,13 +223,6 @@ func insertCase(t *testing.T, id, ref, counsellorID, studentID string) {
 			id, ref, counsellorID, studentID, caseJSON(id, ref, counsellorID, studentID))
 		return err
 	})
-}
-
-func nilIfEmpty(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 func loadCaseData(t *testing.T, id string) map[string]any {

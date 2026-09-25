@@ -115,12 +115,11 @@ func parseJWKS(doc []byte) (map[string]any, error) {
 			if k.Crv != "P-256" {
 				continue
 			}
-			x, errX := bigFromSegment(k.X)
-			y, errY := bigFromSegment(k.Y)
-			if errX != nil || errY != nil {
+			pub, err := p256FromJWK(k.X, k.Y)
+			if err != nil {
 				continue
 			}
-			out[k.Kid] = &ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y}
+			out[k.Kid] = pub
 		case "RSA":
 			n, errN := bigFromSegment(k.N)
 			e, errE := bigFromSegment(k.E)
@@ -134,6 +133,21 @@ func parseJWKS(doc []byte) (map[string]any, error) {
 		return nil, errors.New("parse JWKS: no usable keys")
 	}
 	return out, nil
+}
+
+// p256FromJWK builds a P-256 key from the JWK's affine coordinates through the uncompressed
+// point encoding (0x04 || X || Y), which also rejects a point that is not on the curve.
+func p256FromJWK(xs, ys string) (*ecdsa.PublicKey, error) {
+	x, errX := decodeSegment(xs)
+	y, errY := decodeSegment(ys)
+	if errX != nil || errY != nil || len(x) > 32 || len(y) > 32 {
+		return nil, errors.New("invalid P-256 coordinates")
+	}
+	point := make([]byte, 65)
+	point[0] = 4
+	copy(point[1+32-len(x):33], x)
+	copy(point[33+32-len(y):], y)
+	return ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
 }
 
 func bigFromSegment(s string) (*big.Int, error) {
