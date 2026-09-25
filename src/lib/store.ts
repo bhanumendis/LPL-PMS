@@ -15,7 +15,7 @@
  */
 import type { AuditEntry, AuditState, CaseRecord, CasesState, OrgState, PromptsState, User } from "./types";
 import { DEFAULT_RETENTION, MIN_PASSWORD_LENGTH, defaultAudit, defaultCases, defaultConfig, defaultOrg, defaultPrompts, normalizeConfig } from "./defaults";
-import { SupabaseBackend, readServerConfig } from "./server";
+import { ServerError, SupabaseBackend, readServerConfig } from "./server";
 import type { NotificationRow, NotificationState } from "@/notifications/types";
 import { fanout } from "@/notifications/fanout";
 import type { PushDevice, PushSubscriptionInput } from "@/notifications/push";
@@ -529,8 +529,15 @@ class Store {
     try { return await fn(); }
     catch (e) {
       const message = (e as Error).message || "The change could not be saved.";
-      this.update({ error: message });
       this.errorListeners.forEach((l) => l(message));
+      if (e instanceof ServerError && e.status === 409) {
+        // Someone else saved first. The write was refused whole, so nothing is half-applied:
+        // drop the cached version and load theirs, and the user repeats the action on it.
+        this.lastVersion = null;
+        await this.refresh();
+      } else {
+        this.update({ error: message });
+      }
       throw e;
     }
     finally { this.busy--; }

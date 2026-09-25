@@ -45,6 +45,8 @@ var Functions = map[string]Function{
 		Params: []string{"p_before", "p_actor", "p_event_type", "p_entity_type", "p_entity_id", "p_from", "p_to", "p_q", "p_limit"},
 		Types:  []string{"timestamptz", "text", "text", "text", "text", "timestamptz", "timestamptz", "text", "integer"}, Set: true},
 	"audit_detail": {Name: "audit_detail", Params: []string{"p_id"}, Set: true},
+	// v6: case saves with revision check and an explicit "nothing was saved"
+	"save_case": {Name: "save_case", Params: []string{"p_id", "p_rev", "p_data"}, Types: []string{"text", "integer", "jsonb"}},
 }
 
 // UnknownFunction is PostgREST's answer when no function matches the name and arguments.

@@ -193,12 +193,29 @@ class Client {
     return await res.json() as T[];
   }
 
+  /**
+   * Upsert. Postgres applies the INSERT and SELECT policies (and BEFORE INSERT triggers) to an
+   * upsert even when the row exists, so it is reserved for tables whose policies allow both
+   * for the caller — today only the caller's own push subscriptions.
+   */
   async upsert(table: string, rows: unknown[], onConflict = "id"): Promise<void> {
     if (!rows.length) return;
     await this.ensureFresh();
     const res = await fetch(`${this.cfg.url}/rest/v1/${table}?on_conflict=${onConflict}`, {
       method: "POST",
       headers: { ...this.headers(), Prefer: "return=minimal,resolution=merge-duplicates" },
+      body: JSON.stringify(rows),
+    });
+    if (!res.ok) throw new ServerError(await readableRestError(res), res.status);
+  }
+
+  /** A plain INSERT of new rows: only the insert policy applies. A duplicate id answers 409. */
+  async insert(table: string, rows: unknown[]): Promise<void> {
+    if (!rows.length) return;
+    await this.ensureFresh();
+    const res = await fetch(`${this.cfg.url}/rest/v1/${table}`, {
+      method: "POST",
+      headers: { ...this.headers(), Prefer: "return=minimal" },
       body: JSON.stringify(rows),
     });
     if (!res.ok) throw new ServerError(await readableRestError(res), res.status);
@@ -212,7 +229,7 @@ class Client {
     return await res.json() as T;
   }
 
-  /** A plain UPDATE. Upsert would also need the INSERT policy, which most roles lack. */
+  /** A plain UPDATE of existing rows: only the update policy and the BEFORE UPDATE guards apply. */
   async patch(table: string, query: string, values: Record<string, unknown>): Promise<void> {
     await this.ensureFresh();
     const res = await fetch(`${this.cfg.url}/rest/v1/${table}?${query}`, {
@@ -245,6 +262,9 @@ function readableAuthError(body: unknown, status: number): string {
 async function readableRestError(res: Response): Promise<string> {
   const body = await res.json().catch(() => null) as { message?: string; hint?: string } | null;
   if (res.status === 401 || res.status === 403) return "Your session does not permit that. Sign in again, or ask an administrator to check your role.";
+  if (res.status === 409 && body?.hint === "stale_revision") return body.message ?? "This record was changed by someone else. Reload and try again.";
+  // Database and gateway internals never reach the user; the status still tells support where to look.
+  if (res.status >= 500) return `The server could not complete the request (${res.status}). Try again in a moment.`;
   return body?.message ? `${body.message}${body.hint ? ` — ${body.hint}` : ""}` : `Request failed (${res.status}).`;
 }
 
@@ -286,21 +306,25 @@ function toUser(r: UserRow): User {
   };
 }
 
-function fromUser(u: User, authId?: string | null): Omit<UserRow, "auth_id"> & { auth_id?: string | null } {
-  const row: Omit<UserRow, "auth_id"> & { auth_id?: string | null } = {
-    id: u.id, email: u.email.toLowerCase(), name: u.name, phone: u.phone ?? null, branch: u.branch ?? null,
-    role: u.role, active: u.active, created_at: u.createdAt, created_by: u.createdBy ?? null,
-    last_sign_in_at: u.lastSignInAt ?? null,
+/** The profile columns a client may send; id, auth_id and timestamps belong to the database. */
+type UserColumns = Pick<UserRow, "email" | "name" | "phone" | "branch" | "role" | "active" | "created_by" | "last_sign_in_at">;
+
+function userColumns(u: User): UserColumns {
+  return {
+    email: u.email.trim().toLowerCase(), name: u.name, phone: u.phone ?? null, branch: u.branch ?? null,
+    role: u.role, active: u.active, created_by: u.createdBy ?? null, last_sign_in_at: u.lastSignInAt ?? null,
   };
-  if (authId !== undefined) row.auth_id = authId;
-  return row;
 }
 
-function fromCase(c: CaseRecord): CaseRow {
-  return {
-    id: c.id, ref: c.ref, status: c.status, counsellor_id: c.counsellorId ?? null,
-    student_user_id: c.studentUserId ?? null, rev: c.rev ?? 0, updated_at: c.updatedAt, data: c,
-  };
+/**
+ * Only the columns that actually changed. The profile guard compares old and new values
+ * column by column, so sending an unchanged column costs nothing but sending a normalised
+ * one (an email in a different case, say) would trip a permission it has no reason to need.
+ */
+function changedColumns<T extends object>(before: T, after: T): Partial<T> {
+  const out: Partial<T> = {};
+  for (const k of Object.keys(after) as (keyof T)[]) if (JSON.stringify(after[k]) !== JSON.stringify(before[k])) out[k] = after[k];
+  return out;
 }
 
 function fromAudit(e: AuditEntry): AuditRow {
@@ -322,8 +346,8 @@ function toAudit(r: AuditRow): AuditEntry {
   };
 }
 
-function fromPrompt(p: PromptTemplate): PromptRow {
-  return { id: p.id, title: p.title, status: p.status, version: p.version, updated_at: p.updatedAt, updated_by: p.updatedBy, data: p };
+function promptColumns(p: PromptTemplate): Omit<PromptRow, "id"> {
+  return { title: p.title, status: p.status, version: p.version, updated_at: p.updatedAt, updated_by: p.updatedBy, data: p };
 }
 
 // ---------------------------------------------------------------------------
@@ -334,6 +358,9 @@ export class SupabaseBackend {
   readonly kind = "server" as const;
   readonly polling = true;
   readonly client: Client;
+
+  /** The configuration document exactly as stored, so a save changes only the keys that moved. */
+  private storedConfig: Record<string, unknown> = {};
 
   constructor(cfg: ServerConfig) { this.client = new Client(cfg); }
 
@@ -372,6 +399,7 @@ export class SupabaseBackend {
       // Prompts are administrator-only; other roles receive an empty set from RLS.
       this.client.select<PromptRow>("prompts", "&order=updated_at.desc").catch(() => [] as PromptRow[]),
     ]);
+    this.storedConfig = (orgRows[0]?.config ?? {}) as unknown as Record<string, unknown>;
     const config = { ...normalizeConfig(orgRows[0]?.config ?? {}), setupComplete: true };
     const users: Record<string, User> = {};
     userRows.forEach((r) => { users[r.id] = toUser(r); });
@@ -388,34 +416,66 @@ export class SupabaseBackend {
   }
 
   /**
-   * Writes only what changed. org_config is written only when the configuration itself
-   * differs, so a user-directory change by a role without settings.write never touches it.
+   * Writes only what changed, as INSERTs for new rows and PATCHes for existing ones. The
+   * configuration is one JSON document whose top-level keys answer to different permissions
+   * (permissions → role.write, processors → dataprotection.write, the rest → settings.write),
+   * so the saved document is the stored one with only the changed keys replaced: a Team
+   * Leader editing processors never appears to touch a key they may not write.
    */
   async saveOrg(next: OrgState, prev: OrgState) {
-    if (JSON.stringify(next.config) !== JSON.stringify(prev.config)) await this.client.upsert("org_config", [{ id: "org", config: next.config }]);
-    const changed = Object.values(next.users).filter((u) => JSON.stringify(u) !== JSON.stringify(prev.users[u.id]));
-    if (changed.length) await this.client.upsert("app_users", changed.map((u) => fromUser(u)));
+    const moved = (Object.keys(next.config) as (keyof OrgState["config"])[])
+      .filter((k) => k !== "rev" && k !== "setupComplete" && JSON.stringify(next.config[k]) !== JSON.stringify(prev.config[k]));
+    if (moved.length) {
+      const doc: Record<string, unknown> = { ...this.storedConfig };
+      for (const k of moved) doc[k] = next.config[k];
+      doc.rev = next.config.rev;
+      await this.client.patch("org_config", "id=eq.org", { config: doc });
+      this.storedConfig = doc;
+    }
+    const fresh: User[] = [];
+    for (const u of Object.values(next.users)) {
+      const before = prev.users[u.id];
+      if (!before) { fresh.push(u); continue; }
+      const diff = changedColumns(userColumns(before), userColumns(u));
+      if (Object.keys(diff).length) await this.client.patch("app_users", `id=eq.${encodeURIComponent(u.id)}`, diff);
+    }
+    if (fresh.length) await this.client.insert("app_users", fresh.map((u) => ({ id: u.id, created_at: u.createdAt, ...userColumns(u) })));
   }
 
+  /**
+   * A changed case is saved through save_case() with its next revision; the database accepts
+   * it only when the stored revision is exactly one behind (HTTP 409 otherwise) and reports a
+   * case the caller can no longer change (403/404) instead of matching nothing silently. The
+   * row's status and the columns row-level security reads are derived from the document.
+   */
   async saveCases(next: CasesState, prev: CasesState) {
-    const changed = Object.values(next.cases).filter((c) => {
+    const created: CaseRecord[] = [];
+    for (const c of Object.values(next.cases)) {
       const before = prev.cases[c.id];
-      return !before || before.rev !== c.rev || before.updatedAt !== c.updatedAt;
-    });
-    if (changed.length) await this.client.upsert("cases", changed.map(fromCase));
+      if (!before) { created.push(c); continue; }
+      if (before.rev === c.rev && before.updatedAt === c.updatedAt) continue;
+      await this.client.rpc<number>("save_case", { p_id: c.id, p_rev: c.rev, p_data: c });
+    }
+    if (created.length) await this.client.insert("cases", created.map((c) => ({ id: c.id, ref: c.ref, rev: 1, data: { ...c, rev: 1 } })));
     const removed = Object.keys(prev.cases).filter((id) => !next.cases[id]);
     for (const id of removed) await this.client.remove("cases", `id=eq.${encodeURIComponent(id)}`);
   }
 
   async savePrompts(next: PromptsState, prev: PromptsState) {
-    const changed = Object.values(next.prompts).filter((p) => JSON.stringify(p) !== JSON.stringify(prev.prompts[p.id]));
-    if (changed.length) await this.client.upsert("prompts", changed.map(fromPrompt));
+    const created: PromptTemplate[] = [];
+    for (const p of Object.values(next.prompts)) {
+      const before = prev.prompts[p.id];
+      if (!before) { created.push(p); continue; }
+      if (JSON.stringify(before) !== JSON.stringify(p)) await this.client.patch("prompts", `id=eq.${encodeURIComponent(p.id)}`, promptColumns(p));
+    }
+    if (created.length) await this.client.insert("prompts", created.map((p) => ({ id: p.id, ...promptColumns(p) })));
     const removed = Object.keys(prev.prompts).filter((id) => !next.prompts[id]);
     for (const id of removed) await this.client.remove("prompts", `id=eq.${encodeURIComponent(id)}`);
   }
 
+  /** Audit rows are only ever inserted; the attribution trigger overwrites the actor columns. */
   async pushAudit(entry: AuditEntry) {
-    await this.client.upsert("audit", [fromAudit(entry)]);
+    await this.client.insert("audit", [fromAudit(entry)]);
   }
 
   /** One keyset page of the audit log, newest first; RLS (audit.read) decides what comes back. */
@@ -451,17 +511,13 @@ export class SupabaseBackend {
     await this.client.patch("app_users", `id=eq.${encodeURIComponent(userId)}`, { last_sign_in_at: new Date().toISOString() }).catch(() => undefined);
   }
 
-  async replaceAll(w: { org: OrgState; cases: CasesState; audit: AuditState; prompts: PromptsState }) {
-    await this.client.upsert("org_config", [{ id: "org", config: w.org.config }]);
-    const users = Object.values(w.org.users);
-    if (users.length) await this.client.upsert("app_users", users.map((u) => fromUser(u)));
-    const cases = Object.values(w.cases.cases);
-    // Chunked so a restore does not arrive as one oversized request.
-    for (let i = 0; i < cases.length; i += 25) await this.client.upsert("cases", cases.slice(i, i + 25).map(fromCase));
-    const entries = w.audit.entries.slice(0, 600);
-    for (let i = 0; i < entries.length; i += 100) await this.client.upsert("audit", entries.slice(i, i + 100).map(fromAudit));
-    const prompts = Object.values(w.prompts.prompts);
-    if (prompts.length) await this.client.upsert("prompts", prompts.map(fromPrompt));
+  /**
+   * Whole-workspace restore is a browser-storage feature. On a server it would overwrite live
+   * records from a file with no revision checks, so production data is backed up and restored
+   * with the database's own tools instead (docs/OPERATIONS.md).
+   */
+  async replaceAll(_w: { org: OrgState; cases: CasesState; audit: AuditState; prompts: PromptsState }): Promise<void> {
+    throw new ServerError("Restoring a workspace file is not available on a server. Restore from a database backup instead.", 405);
   }
 
   // ---- notifications: written by database triggers, read through RLS-scoped RPCs ----
@@ -502,12 +558,8 @@ export class SupabaseBackend {
     return await this.client.rpc<string>("workspace_version").catch(() => null);
   }
 
-  /** The caller's own profile row goes last: every other delete needs its permissions. */
-  async clear() {
-    await this.client.remove("prompts", "id=neq.__none__");
-    await this.client.remove("cases", "id=neq.__none__");
-    await this.client.remove("audit", "id=neq.__none__");
-    await this.client.remove("org_config", "id=neq.__none__");
-    await this.client.remove("app_users", "id=neq.__none__");
+  /** Wiping a live database from a browser is not a feature. */
+  async clear(): Promise<void> {
+    throw new ServerError("Resetting the workspace is not available on a server.", 405);
   }
 }
