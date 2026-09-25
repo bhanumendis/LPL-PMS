@@ -253,3 +253,22 @@ html[data-theme="dark"] .topbar-l .brand img { height: 34px; }
   .rail-row::before, .rail-sum::before, .rail-stage-dot, .p-avatar svg, .p-avatar .p-sev, .p-avatar .unseen { forced-color-adjust: none; }
   .rail.over { border: 1px solid CanvasText; }
 }
+
+/* Section navigation: the pages inside a grouped destination (People, Governance). Scrolls
+   sideways inside itself on a narrow screen; the page never does. */
+.section-nav { margin: 0 0 var(--s-5); min-width: 0; }
+.section-nav ul { display: flex; gap: var(--s-1); padding: 4px; margin: 0; list-style: none; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; border: 1px solid var(--hair); border-radius: var(--r-pill); background: var(--surface-2); width: max-content; max-width: 100%; }
+.section-nav ul::-webkit-scrollbar { display: none; }
+.section-nav li { flex: 0 0 auto; }
+.section-nav-item {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0 var(--s-4); border-radius: var(--r-pill);
+  font-family: var(--ui); font-size: var(--fs-sm); font-weight: 500; color: var(--muted); text-decoration: none; white-space: nowrap;
+  transition: background var(--d-1), color var(--d-1);
+}
+.section-nav-item:hover { color: var(--ink); }
+.section-nav-item[aria-current="page"] { background: var(--bg); color: var(--accent-text); font-weight: 600; box-shadow: 0 1px 2px rgba(11, 31, 75, 0.08); }
+.section-nav-item:focus-visible { outline-offset: -2px; }
+@media (forced-colors: active) {
+  .section-nav ul { border-color: CanvasText; }
+  .section-nav-item[aria-current="page"] { background: Highlight; color: HighlightText; forced-color-adjust: none; }
+}

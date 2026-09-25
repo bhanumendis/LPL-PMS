@@ -18,6 +18,7 @@ import { activeDestination, destinationsFor, moreDestination, pageTitle, type Na
 import { TopBar } from "./TopBar";
 import { MobileTabBar } from "./MobileTabBar";
 import { renderPage } from "./pages";
+import { SectionNav } from "./SectionNav";
 import { buildCommands } from "./commands";
 import { CommandPalette, SearchButton } from "./CommandPalette";
 import { NotificationBell } from "@/notifications/NotificationBell";
@@ -47,6 +48,7 @@ export function AppShell() {
   const seenPage = entry.key === pageKey ? entry.seen : visited.includes(pageKey);
   useEffect(() => { if (!visited.includes(pageKey)) setVisited((v) => (v.includes(pageKey) ? v : [...v, pageKey])); }, [pageKey, visited, setVisited]);
   const activeId = activeDestination(page, primary) ?? (moreDest && moreDest.pages.includes(page) ? "more" : undefined);
+  const activeDest = primary.find((d) => d.id === activeId);
   const signals = useCaseSignals();
   const badges = useMemo(() => countBadges(signals.values(), { mineId: seesAll ? undefined : user?.id }), [signals, seesAll, user?.id]);
   useDocumentTitle(pageTitle(page, navInput));
@@ -112,6 +114,7 @@ export function AppShell() {
         profileExtra={<button type="button" className="menu-item" onClick={() => setSettingsOpen(true)}><BellRing aria-hidden />Notification settings</button>} />
       <div className={`frame ${railOn && !mobile ? "has-rail" : ""}`}>
         <main className="page" id="main" tabIndex={-1}>
+          {activeDest && <SectionNav dest={activeDest} activePage={page} onNavigate={navigate} />}
           <RegionBoundary label="page">
             <div key={page + (route.caseId ?? "")} className={`page-enter ${seenPage ? "seen" : ""}`}>{renderPage(route, s)}</div>
           </RegionBoundary>

@@ -34,5 +34,6 @@ class ResizeObserverStub {
 const w = window as unknown as { ResizeObserver?: unknown };
 if (!w.ResizeObserver) w.ResizeObserver = ResizeObserverStub;
 
-if (!window.scrollTo) window.scrollTo = () => {};
+// jsdom defines scrollTo as a "not implemented" stub that logs on every navigation.
+window.scrollTo = (() => {}) as typeof window.scrollTo;
 if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};

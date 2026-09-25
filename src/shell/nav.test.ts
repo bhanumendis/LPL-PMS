@@ -8,7 +8,7 @@ import { activeDestination, destinationsFor, moreDestination, pageTitle, type Na
 import { can as canFn, caseScopeOf } from "@/lib/rbac";
 import { defaultConfig } from "@/lib/defaults";
 import { user } from "@/test/fixtures";
-import type { Role } from "@/lib/types";
+import type { Permission, Role } from "@/lib/types";
 
 function input(role: Role): NavInput {
   const config = defaultConfig();
@@ -56,4 +56,33 @@ describe("destinationsFor", () => {
     expect(pageTitle("", input("team_leader"))).toBe("Overview");
     expect(pageTitle("journey", input("student"))).toBe("Journey");
   });
+});
+
+/**
+ * Every page a role may open must be reachable from visible navigation: a dock or tab-bar
+ * destination, a More entry, or the section nav of a grouped destination. v5 hid Roles and
+ * permissions and the Audit log behind the command palette because grouped children were
+ * never rendered; this is the invariant that would have caught it.
+ */
+const PAGE_GATE: Record<string, Permission | "admin"> = {
+  cases: "case.view", approvals: "gate.view", escalations: "escalation.view", staff: "staff.read", roles: "role.view",
+  dataprotection: "dataprotection.view", audit: "audit.view", settings: "settings.view", prompts: "admin",
+};
+
+describe("every permitted page is reachable", () => {
+  for (const role of ["admin", "team_leader", "counsellor"] as Role[]) {
+    it(role, () => {
+      const i = input(role);
+      const { primary, more } = destinationsFor(i);
+      const reachable = new Set<string>([
+        ...primary.map((d) => d.page),
+        ...primary.flatMap((d) => (d.children ?? []).map((c) => c.page)),
+        ...more.map((m) => m.page),
+      ]);
+      for (const [page, gate] of Object.entries(PAGE_GATE)) {
+        const allowed = gate === "admin" ? i.isAdmin : i.can(gate);
+        if (allowed) expect(reachable, `${role} may open ${page}`).toContain(page);
+      }
+    });
+  }
 });
