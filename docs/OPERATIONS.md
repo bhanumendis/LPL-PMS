@@ -26,9 +26,9 @@ scripts/deploy/configure-repo.sh --repo <owner>/<name> --reviewer <group-it-logi
 
 It sets, and can be run again at any time:
 
-1. **Branch protection on `main`:** pull requests only, the six CI gates required and up to date
-   (*Web*, *Server*, *End to end*, *Secret scan*, *Pipeline*, *Image · build, scan, deploy
-   rehearsal*), one approving review (`--required-reviews 0` for a single maintainer, who cannot
+1. **Branch protection on `main`:** pull requests only, the seven CI gates required and up to
+   date (*Web*, *Server*, *End to end*, *Web Vitals*, *Secret scan*, *Pipeline*, *Image ·
+   build, scan, deploy rehearsal*), one approving review (`--required-reviews 0` for a single maintainer, who cannot
    approve their own pull request), stale approvals dismissed, conversations resolved, no force
    pushes, administrators included.
 2. **Environments:** `production` and `production-db`, deployable from protected branches only,
@@ -60,9 +60,15 @@ Every push and pull request runs the gates:
   freshness, attribution, `npm audit` of every dependency (development tooling included) at
   high, production build and bundle budget.
 - **Server:** Go formatting, vet, staticcheck, govulncheck and the unit, integration and
-  migration suites against Postgres 16.
+  migration suites against Postgres 16 (the data integrity report among them).
 - **End to end:** the client against lpl-api, and the production bundle visited as every role at
-  seven viewports plus dark with axe.
+  eight viewports (a phone held sideways among them) plus dark with axe.
+- **Web Vitals:** on a runner of its own, one test at a time, every role signs in from a cold
+  cache, loads each of its pages from scratch and uses it, under Lighthouse's conditions
+  (phones and tablets: 150 ms round trips, 1.6 Mbps, a CPU four times slower; desktops: 40 ms,
+  10 Mbps), at 1440×900, 1024×768, 768×1024, 360×800 and 844×390. Every page's LCP, CLS and
+  INP must be out of "poor" and the 75th percentile "good" (LCP ≤ 2.5 s, CLS ≤ 0.1, INP ≤
+  200 ms). The tables are in the job's artifact (`test-results/ui/vitals`).
 - **Secret scan:** gitleaks over the full history.
 - **Pipeline:** actionlint (with shellcheck over every workflow step), shellcheck over the
   scripts, and a dry run of `configure-repo.sh` that also checks its required checks are the
@@ -115,15 +121,47 @@ end in the same catalogue.
 
 To migrate production: take a backup (Supabase → Database → Backups, or confirm
 point-in-time recovery is on), then Actions → **Migrate database** with *apply* unticked to
-list what is pending; run again with *apply* ticked and the confirmation typed. Each file runs
-in its own transaction; the first failure stops the run and leaves the database at the last
-completed version. Migrate **before** merging a release that depends on the new schema.
+list what is pending and read the data integrity report (below); run again with *apply*
+ticked and the confirmation typed. Each file runs in its own transaction; the first failure
+stops the run and leaves the database at the last completed version. Migrate **before**
+merging a release that depends on the new schema.
 
 The v6 release (from v5): migrate (v6 write path, RBAC, case index with its backfill, workers,
 attribution, case order stamps with their backfill: about 45 s per million cases), then deploy
 lpl-api, then the web application, then retire the Edge Functions and cron jobs in the order
 `server/docs/CUTOVER.md` gives. The case index migration re-derives every case's summary once;
 on a large project run it in a quiet hour.
+
+## Data integrity
+
+`scripts/db/integrity-report.sql` checks the data rather than the schema: profiles and sign-ins
+(roles outside the set, emails shared or out of step with the sign-in, nobody holding the
+system, deactivated counsellors with open cases), cases (counsellors and students that are not
+profiles or hold the wrong role, statuses, steps, gates, documents and transfers outside their
+sets or sharing an id, duplicate references, the row and its document disagreeing, dates that
+are missing, unreadable or in the future), audit, configuration (permission cells naming roles
+that do not exist), notifications and push devices, SUPER ADMINs outside the Group IT domains,
+and test or demonstration data (the v5 demonstration set: ids beginning `sample-`, addresses at
+`lyceumplacements.demo` and `student.demo`; reserved test domains such as `example.com`).
+
+It runs in one read-only transaction and prints check codes, counts and the first record ids:
+never a name, an email address or a phone number. The Migrate database workflow runs it
+before migrating and again after; to run it yourself:
+
+```bash
+psql "$DATABASE_URL" -X -f scripts/db/integrity-report.sql            # to read
+psql "$DATABASE_URL" -X -v csv=1 -f scripts/db/integrity-report.sql   # as CSV
+```
+
+- **blocks migration**: a pending migration would fail on it; the report exits non-zero and
+  the workflow stops before applying anything.
+- **fix before go-live**: a screen, a permission or a delivery would break on it. Correct it
+  through the application where it can be (Staff, the case itself), otherwise with SQL that
+  Group IT writes, reviews and runs after a backup.
+- **review**: for a person to classify. Test and demonstration data is never removed
+  automatically: confirm with the Placement Team that the records are not real, take a
+  backup, delete exactly the listed ids, and record what was removed and why in the change
+  log of the release.
 
 ## Running it
 
@@ -152,7 +190,7 @@ npm ci
 npm run verify                         # typecheck, lint, unit tests, contrast
 cd server && go test -race ./... && cd ..   # add TEST_DATABASE_URL for the integration suites
 E2E_DATABASE_URL=postgres://…/lpl_e2e scripts/e2e-api.sh   # client against lpl-api
-E2E_DATABASE_URL=postgres://…/lpl_e2e scripts/e2e-ui.sh    # browser suite, screenshots in test-results/ui
+E2E_DATABASE_URL=postgres://…/lpl_e2e scripts/e2e-ui.sh    # browser suite then Web Vitals (E2E_UI_SUITES="pages" or "vitals" for one)
 node scripts/check-attribution.mjs && node scripts/check-bundle.mjs   # after a build
 REHEARSAL_DATABASE_URL=postgres://…/lpl_rehearsal scripts/deploy/rehearse.sh   # needs Docker and a registry on localhost:5000
 ```

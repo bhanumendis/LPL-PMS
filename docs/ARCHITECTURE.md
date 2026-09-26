@@ -81,12 +81,13 @@ retention every 6 h. Safe on any number of replicas. Details:
 
 | Layer | What it proves |
 |---|---|
-| Unit and component (vitest, 184) | Logic, store, server adapter wire contract, views, WCAG A/AA in jsdom, performance and motion guards (stylesheet source), overlay presence |
+| Unit and component (vitest, 185) | Logic, store, server adapter wire contract, views, WCAG A/AA in jsdom, performance and motion guards (stylesheet source; only a loading indicator animates without end), overlay presence |
 | Go unit | Config, auth, contract, SQL building, errors, rate limits, Web Push (RFC 8291 vector and cross-implementation vectors), workers' helpers |
 | Go integration (Postgres) | Row-level security for every role, guards and their messages, paging completeness and order, parity with the TypeScript reference (stamps fresh, stale and mixed), stamp windows held at every hour and at each boundary, both search routes, registers, dashboard, workers (push leases, retries, revocation, reminders, retention, restamping), privileges of definer functions |
-| Migration | An upgraded v5 database and a fresh install end in the same catalogue; migrations are idempotent |
+| Migration | An upgraded v5 database and a fresh install end in the same catalogue; migrations are idempotent. The data integrity report runs at v4, v5 and v6, finds every planted defect by its own check, changes nothing and prints no personal data, and fails on a finding that would stop a migration |
 | End to end, API | The browser's server path (store, read model, saves, 409, change polling) against the real lpl-api |
-| End to end, browser | The production bundle as every role at seven viewports plus dark: axe WCAG 2.2 A/AA with contrast, no sideways scroll, no console errors, screenshots; overlays leaving, and the phone sheet under a real pointer (follow, rubber-band, throw) |
+| End to end, browser | The production bundle as every role at eight viewports (a phone held sideways among them) plus dark: axe WCAG 2.2 A/AA with contrast, no sideways scroll, no console errors, screenshots; overlays leaving, and the phone sheet under a real pointer (follow, rubber-band, throw) |
+| Web Vitals | Every role's pages loaded from scratch and used, under Lighthouse's mobile or desktop network and CPU conditions, at one viewport per layout: each page's LCP, CLS and INP out of "poor", the 75th percentile "good" (LCP ≤ 2.5 s, CLS ≤ 0.1, INP ≤ 200 ms) |
 
 ## Further reading
 

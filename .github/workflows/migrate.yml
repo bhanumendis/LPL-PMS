@@ -5,7 +5,9 @@
 # environment (configure required reviewers), and dry-run unless asked otherwise. Every
 # migration is idempotent and records its version in public.schema_migrations; each runs in
 # its own transaction and the first failure stops the run. Take a backup first (Supabase:
-# Database → Backups, or point-in-time recovery). See docs/OPERATIONS.md.
+# Database → Backups, or point-in-time recovery). Every run prints the data integrity report
+# before migrating (and after, when it applies); a finding that would make a migration fail
+# stops the run first. See docs/OPERATIONS.md.
 name: Migrate database
 
 on:
@@ -55,6 +57,10 @@ jobs:
           done
           echo "files=$pending" >> "$GITHUB_OUTPUT"
           if [ -z "$pending" ]; then echo "Nothing to apply."; else echo "Pending:"; for f in $pending; do echo "  $f"; done; fi
+      # Read only; prints ids and counts, never personal data. A finding that would make a
+      # migration fail fails this step, so nothing is applied (scripts/db/integrity-report.sql).
+      - name: Data integrity report
+        run: psql "$DATABASE_URL" -X -f scripts/db/integrity-report.sql
       - name: Apply
         if: inputs.apply && steps.pending.outputs.files != ''
         env:
@@ -66,3 +72,6 @@ jobs:
             echo "::endgroup::"
           done
           psql "$DATABASE_URL" -tAc "select version || '  ' || name from public.schema_migrations order by version"
+      - name: Data integrity report, migrated
+        if: inputs.apply && steps.pending.outputs.files != ''
+        run: psql "$DATABASE_URL" -X -f scripts/db/integrity-report.sql

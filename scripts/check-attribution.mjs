@@ -3,7 +3,7 @@
  * Developed by Bhanu Mendis - Group IT
  *
  * Attribution check (CI): every source file the project owns names its author near the top,
- * in the form for its side — backend (server/, supabase/, workflows, shell scripts):
+ * in the form for its side — backend (server/, supabase/, workflows, shell scripts, SQL):
  * "Copyright © Bhanu Mendis - LGH IT"; frontend and its tooling: "Developed by Bhanu Mendis -
  * Group IT" — and no file keeps the old reserved-rights line. Third-party and generated files
  * (lock files, go.sum, fixtures, dist) are not ours to mark and are skipped.
@@ -26,7 +26,7 @@ for (const f of files) {
   try { text = readFileSync(f, "utf8"); } catch { continue; }
   if (RESERVED.test(text)) problems.push(`${f}: keeps the old reserved-rights line`);
   if (!SOURCE.test(f)) continue;
-  const backend = /^(server|supabase|\.github)\//.test(f) || f.endsWith(".sh");
+  const backend = /^(server|supabase|\.github)\//.test(f) || /\.(sh|sql)$/.test(f);
   const want = backend ? BACKEND : FRONTEND;
   const head = text.split("\n").slice(0, 15).join("\n");
   if (!head.includes(want)) problems.push(`${f}: missing "${want}" in its first 15 lines`);

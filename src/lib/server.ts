@@ -90,6 +90,12 @@ export class ServerError extends Error {
 
 export type AdminUserResult = { ok: true; authId: string } | { ok: false; error: string; notDeployed?: boolean };
 
+/** What to do when lpl-api did not issue a sign-in. A production build is fixed to its API,
+ * so there is nothing to reconnect: Group IT checks the server. */
+export const NOT_DEPLOYED_HINT = BROWSER_STORAGE_ALLOWED
+  ? "Sign-ins are issued by the API server (lpl-api). Connect this workspace to its address under Settings → Server connection, not to the database project directly."
+  : "Sign-ins are issued by the API server (lpl-api), which did not answer. Try again in a minute; if it keeps failing, ask Group IT to check the server.";
+
 class Client {
   private session: Session | null = readSession();
   private refreshing: Promise<void> | null = null;

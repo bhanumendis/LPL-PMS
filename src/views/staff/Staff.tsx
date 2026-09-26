@@ -14,10 +14,8 @@ import { fmtDateTime } from "@/lib/logic";
 import { Donut, Legend } from "@/lib/charts";
 import type { Role, User } from "@/lib/types";
 import { EVENTS } from "@/lib/audit";
+import { NOT_DEPLOYED_HINT } from "@/lib/server";
 import { ChangeRoleDialog } from "./ChangeRole";
-
-/** Shown beside an admin-users failure when the workspace is not connected through lpl-api. */
-const NOT_DEPLOYED_HINT = "Sign-ins are issued by the API server (lpl-api). Connect this workspace to its address under Settings → Server connection, not to the database project directly.";
 
 export function StaffPage() {
   const { users, user, audit, snap, can, go } = useSession();
