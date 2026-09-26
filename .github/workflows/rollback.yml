@@ -1,10 +1,11 @@
 # Lyceum Placements — Placement Management System
 # Copyright © Bhanu Mendis - LGH IT
 #
-# Manual rollback (or roll-forward) to a commit that has already passed CI on main: the API is
+# Rollback (or roll-forward) to a commit that has already passed CI on main: the API is
 # re-pointed at that commit's published image and the web application is rebuilt from it.
-# Nothing is rebuilt for the API, so what runs is exactly what passed the gates. See
-# docs/OPERATIONS.md. Database migrations are additive and are never rolled back here.
+# Nothing is rebuilt for the API, so what runs is exactly what passed the gates. Run by hand,
+# and called by CI when a web deploy fails its smoke test. See docs/OPERATIONS.md. Database
+# migrations are additive and are never rolled back here.
 name: Rollback
 
 on:
@@ -18,13 +19,19 @@ on:
         type: choice
         options: [both, api, web]
         default: both
+  workflow_call:
+    inputs:
+      sha:
+        description: Full commit SHA on main to restore (its CI run must have passed)
+        type: string
+        required: true
+      target:
+        description: both, api or web
+        type: string
+        default: both
 
 permissions:
   contents: read
-
-concurrency:
-  group: rollback
-  cancel-in-progress: false
 
 jobs:
   verify:
@@ -51,6 +58,10 @@ jobs:
     environment:
       name: production
       url: ${{ vars.API_URL }}
+    # The same group as CI's deploy-api: a rollback and a deploy never run at once.
+    concurrency:
+      group: deploy-api
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
@@ -59,20 +70,21 @@ jobs:
       ANON_KEY: ${{ vars.VITE_API_ANON_KEY }}
       DEPLOY_HOOK: ${{ secrets.API_DEPLOY_HOOK }}
       EXPECT_REVISION: ${{ inputs.sha }}
+      SHA: ${{ inputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: name
         run: echo "image=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/lpl-api" >> "$GITHUB_OUTPUT"
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Promote
         env:
           IMAGE: ${{ steps.name.outputs.image }}
-        run: scripts/deploy/promote.sh "$IMAGE:sha-${{ inputs.sha }}"
+        run: scripts/deploy/promote.sh "$IMAGE:sha-$SHA"
       - name: Smoke test
         run: scripts/deploy/smoke-api.sh
 
@@ -88,11 +100,14 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: deploy-web
+      cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
           cache: npm
@@ -108,11 +123,11 @@ jobs:
           mkdir -p site
           cp dist/index.html dist/LPL_Placement_Management_System.html dist/sw.js site/
           touch site/.nojekyll
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: site
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
       - name: Smoke test
         env:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}

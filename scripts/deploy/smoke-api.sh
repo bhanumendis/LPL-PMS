@@ -3,7 +3,8 @@
 # Copyright © Bhanu Mendis - LGH IT
 #
 # Smoke test for a deployed lpl-api: the expected revision is the one answering (GET /version,
-# waited for while the host rolls it out), the database is reachable (/readyz), the anon-key
+# waited for while the host rolls it out), the database is reachable and carries every migration
+# this build needs (/readyz, see server/internal/schema), the anon-key
 # contract answers (needs_bootstrap is false on a live project) and the security headers are
 # present. Exits non-zero on any failure, which triggers the automatic rollback in CI.
 #   API_URL=https://api.example ANON_KEY=… EXPECT_REVISION=<sha> scripts/deploy/smoke-api.sh
@@ -22,7 +23,8 @@ if [ -n "$want" ]; then
 fi
 
 curl -fsS --max-time 10 "$api/healthz" | grep -qx ok || { echo "::error::/healthz"; exit 1; }
-curl -fsS --max-time 20 "$api/readyz" | grep -qx ready || { echo "::error::/readyz: the database does not answer"; exit 1; }
+ready=$(curl -sS --max-time 20 "$api/readyz" 2>&1 || true)
+[ "$ready" = "ready" ] || { echo "::error::/readyz answered '${ready:-nothing}'"; exit 1; }
 
 if [ -n "${ANON_KEY:-}" ]; then
   body=$(curl -fsS --max-time 20 -X POST -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" -H "Content-Type: application/json" -d '{}' "$api/rest/v1/rpc/needs_bootstrap")

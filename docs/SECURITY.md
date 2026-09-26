@@ -59,6 +59,9 @@ Report a vulnerability privately to Group IT, never in a public issue.
   encrypted end to end (RFC 8291) and signed (RFC 8292).
 - **Dependencies:** the standard library only, plus pgx. CI runs govulncheck on reachable code
   (standard library included) and staticcheck. `go.mod` pins the patched toolchain.
+- **The image** (distroless, non-root) is built, scanned with grype (high or critical with a fix
+  fails the pull request) and run through a deploy rehearsal on every pull request; the
+  published image carries provenance and an SBOM.
 
 ## The web application
 
@@ -71,6 +74,16 @@ Report a vulnerability privately to Group IT, never in a public issue.
   development builds, for walkthroughs, never for real records.
 - Audit rows are written and attributed by the database; special-category fields are
   redacted from change diffs before they leave the browser.
+
+## The supply chain
+
+- Third-party GitHub Actions are pinned to commit SHAs (Dependabot proposes updates as pull
+  requests, which must pass every gate); workflow inputs reach shells as environment variables,
+  never as text spliced into a script; actionlint and shellcheck gate every change to the
+  pipeline.
+- `npm audit` fails CI on any high or critical advisory, development tooling included.
+- `scripts/deploy/configure-repo.sh` makes the workflows' default token read-only and turns on
+  Dependabot alerts and security updates.
 
 ## Secrets
 

@@ -33,11 +33,15 @@ jobs:
     env:
       DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Preconditions
+        # Inputs reach the shell as environment variables, never as text spliced into the script.
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRMATION: ${{ inputs.backup_confirmation }}
         run: |
           [ -n "$DATABASE_URL" ] || { echo "::error::PRODUCTION_DATABASE_URL is not set for the production-db environment"; exit 1; }
-          if [ "${{ inputs.apply }}" = "true" ] && [ "${{ inputs.backup_confirmation }}" != "I have a current backup" ]; then
+          if [ "$APPLY" = "true" ] && [ "$CONFIRMATION" != "I have a current backup" ]; then
             echo "::error::Applying needs the backup confirmation."; exit 1
           fi
       - name: Pending migrations
@@ -45,7 +49,7 @@ jobs:
         run: |
           applied=$(psql "$DATABASE_URL" -tAc "select coalesce(string_agg(version, ' '), '') from public.schema_migrations" 2>/dev/null || echo "")
           pending=""
-          for f in $(ls supabase/migrations/*.sql | sort); do
+          for f in supabase/migrations/*.sql; do
             v=$(basename "$f" | cut -d_ -f1)
             case " $applied " in *" $v "*) ;; *) pending="$pending $f" ;; esac
           done
@@ -53,8 +57,10 @@ jobs:
           if [ -z "$pending" ]; then echo "Nothing to apply."; else echo "Pending:"; for f in $pending; do echo "  $f"; done; fi
       - name: Apply
         if: inputs.apply && steps.pending.outputs.files != ''
+        env:
+          PENDING: ${{ steps.pending.outputs.files }}
         run: |
-          for f in ${{ steps.pending.outputs.files }}; do
+          for f in $PENDING; do
             echo "::group::$f"
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 --single-transaction -q -f "$f"
             echo "::endgroup::"

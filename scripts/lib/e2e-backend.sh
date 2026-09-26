@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Lyceum Placements — Placement Management System
 # Copyright © Bhanu Mendis - LGH IT
 #

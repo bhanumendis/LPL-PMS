@@ -23,6 +23,7 @@ import (
 	"lpl-api/internal/db"
 	"lpl-api/internal/gotrue"
 	"lpl-api/internal/httpapi"
+	"lpl-api/internal/schema"
 	"lpl-api/internal/webpush"
 	"lpl-api/internal/workers"
 )
@@ -100,7 +101,7 @@ func main() {
 		_ = hs.Shutdown(shutdownCtx)
 	}()
 
-	logger.Info("lpl-api listening", "revision", revision, "addr", cfg.ListenAddr, "env", cfg.Env, "gotrue", cfg.GoTrueURL, "simple_protocol", cfg.DBSimpleProtocol,
+	logger.Info("lpl-api listening", "revision", revision, "schema", schema.Required, "addr", cfg.ListenAddr, "env", cfg.Env, "gotrue", cfg.GoTrueURL, "simple_protocol", cfg.DBSimpleProtocol,
 		"cors_origins", cfg.CORSAllowOrigins, "workers", cfg.Workers, "push", cfg.Workers && cfg.VAPIDPublicKey != "")
 	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("listen", "error", err.Error())
