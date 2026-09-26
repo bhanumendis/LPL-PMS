@@ -166,12 +166,18 @@ test("overlays leave the way they came; on a phone the sheet follows the finger,
     await page.mouse.up();
     await expect(dialog).toBeVisible();
     await expect.poll(async () => Math.abs(await translateY()), { timeout: 3000 }).toBeLessThan(0.5);
-    // A quick flick down throws it away, and the throw carries on instead of restarting.
-    await page.mouse.move(x, y);
-    await page.mouse.down();
-    await page.mouse.move(x, y + 30, { steps: 2 });
-    await page.mouse.move(x, y + 70, { steps: 2 });
-    await page.mouse.up();
+    // A quick flick down (70px, well short of the 120px distance rule) throws it away, and the
+    // throw carries on instead of restarting. The flick is dispatched with its own timestamps:
+    // how fast a finger moved must not depend on how busy the test machine is.
+    const cdp = await page.context().newCDPSession(page);
+    const t0 = Date.now() / 1000;
+    const input = (type: "mousePressed" | "mouseMoved" | "mouseReleased", dy: number, dt: number) => cdp.send("Input.dispatchMouseEvent",
+      { type, x, y: y + dy, button: "left", buttons: type === "mouseReleased" ? 0 : 1, clickCount: 1, timestamp: t0 + dt });
+    await input("mousePressed", 0, 0);
+    await input("mouseMoved", 20, 0.012);
+    await input("mouseMoved", 45, 0.024);
+    await input("mouseMoved", 70, 0.036);
+    await input("mouseReleased", 70, 0.040);
     await expect(dialog).toHaveCount(0);
     expect(await page.locator(".sheet[data-thrown]").count()).toBeLessThanOrEqual(1);
     await expect(page.locator(".sheet")).toHaveCount(0, { timeout: 3000 });
