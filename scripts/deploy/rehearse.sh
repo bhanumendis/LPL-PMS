@@ -32,6 +32,18 @@ api="http://127.0.0.1:$PORT"
 anon="rehearsal-anon-key"
 trap 'docker logs "$container" > .rehearsal-lpl-api.log 2>&1 || true; docker rm -f "$container" > /dev/null 2>&1 || true' EXIT
 digest() { docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' 2>/dev/null | jq -r '.digest // empty' || true; }
+# The linux/amd64 image a reference resolves to. A tag may hold the image itself or an index
+# around it (promote.sh's imagetools writes an index when the source is a plain image, as
+# Docker 28 pushes), and either way it is the same image.
+image_of() {
+  local raw
+  raw=$(docker buildx imagetools inspect "$1" --raw 2> /dev/null) || return 0
+  if jq -e '.manifests' > /dev/null <<< "$raw"; then
+    jq -r '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")][0].digest // empty' <<< "$raw"
+  else
+    digest "$1"
+  fi
+}
 
 echo "== database: supabase/schema.sql, bootstrapped as a live project is"
 psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -q -c "drop database if exists \"$DB_NAME\"" -c "create database \"$DB_NAME\""
@@ -52,8 +64,8 @@ echo "== promote, as deploy-api does"
 before="$(digest "$IMAGE:production")"
 echo "production ran: ${before:-nothing}"
 scripts/deploy/promote.sh "$IMAGE:sha-$REVISION"
-now="$(digest "$IMAGE:production")"
-if [ -z "$now" ] || [ "$now" != "$(digest "$IMAGE:sha-$REVISION")" ]; then
+now="$(digest "$IMAGE:production")"   # what deploy-api records as the rollback target
+if [ -z "$now" ] || [ "$(image_of "$IMAGE:production")" != "$(image_of "$IMAGE:sha-$REVISION")" ]; then
   echo "::error::$IMAGE:production does not point at the new image"; exit 1
 fi
 
@@ -77,6 +89,6 @@ echo "refused, as it must be: ${refusal#::error::}"
 
 echo "== roll back by digest, as the automatic rollback does"
 scripts/deploy/promote.sh "$IMAGE@$now"
-[ "$(digest "$IMAGE:production")" = "$now" ] || { echo "::error::promoting by digest did not move $IMAGE:production"; exit 1; }
+[ "$(image_of "$IMAGE:production")" = "$(image_of "$IMAGE@$now")" ] || { echo "::error::promoting by digest did not move $IMAGE:production"; exit 1; }
 
 echo "deploy rehearsal passed: $IMAGE:sha-$REVISION"
