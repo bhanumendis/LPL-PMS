@@ -12,4 +12,4 @@ package schema
 
 // Required is the newest migration in supabase/migrations. TestRequiredIsTheNewestMigration
 // fails the build when a migration is added without moving it.
-const Required = "20260926000100"
+const Required = "20260926000200"

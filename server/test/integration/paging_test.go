@@ -565,18 +565,35 @@ func TestRegistersPageCompletely(t *testing.T) {
 		}
 		return ex.QueryRow(ctx, "select count(*) filter (where status in ('approved', 'returned')), count(*) filter (where status = 'pending') from public.case_gates").Scan(&decided, &pending)
 	})
-	// What the documents hold, independently of the triggers.
-	var wantDecided, wantPending, wantTransfers, approved, firstRound int
+	// What the documents hold, independently of the triggers. Awaiting decision is the approval
+	// queue: open cases where the latest round of gate 16 or 19 is pending.
+	var wantDecided, wantPending, wantAwaiting, wantTransfers, approved, firstRound int
 	for _, c := range w.fx.Cases {
 		var doc struct {
-			Gates []struct {
-				Status string `json:"status"`
-				Round  int    `json:"round"`
+			Status string `json:"status"`
+			Gates  []struct {
+				Gate   float64 `json:"gate"`
+				Status string  `json:"status"`
+				Round  int     `json:"round"`
 			} `json:"gates"`
 			Transfers []any `json:"transfers"`
 		}
 		_ = json.Unmarshal(c, &doc)
 		wantTransfers += len(doc.Transfers)
+		if doc.Status == "open" {
+			for _, gate := range []float64{16, 19} {
+				latest := -1
+				for i, g := range doc.Gates {
+					if g.Gate == gate && (latest < 0 || g.Round > doc.Gates[latest].Round) {
+						latest = i
+					}
+				}
+				if latest >= 0 && doc.Gates[latest].Status == "pending" {
+					wantAwaiting++
+					break
+				}
+			}
+		}
 		for _, g := range doc.Gates {
 			switch g.Status {
 			case "pending":
@@ -622,8 +639,16 @@ func TestRegistersPageCompletely(t *testing.T) {
 	expect(t, r, http.StatusOK, "")
 	var gs map[string]any
 	_ = json.Unmarshal([]byte(r.Body), &gs)
-	if gs["decided"] != float64(wantDecided) || gs["approved"] != float64(approved) || gs["firstRoundApproved"] != float64(firstRound) || gs["pending"] != float64(wantPending) {
-		t.Fatalf("gate_stats %v; want decided %d approved %d first-round %d pending %d", gs, wantDecided, approved, firstRound, wantPending)
+	if gs["decided"] != float64(wantDecided) || gs["approved"] != float64(approved) || gs["firstRoundApproved"] != float64(firstRound) || gs["pending"] != float64(wantAwaiting) {
+		t.Fatalf("gate_stats %v; want decided %d approved %d first-round %d pending (awaiting decision) %d", gs, wantDecided, approved, firstRound, wantAwaiting)
+	}
+	// "Awaiting decision" heads the approval queue, so it is the queue's own count; the fixture
+	// holds pending submissions outside it (other statuses, earlier rounds) for this to mean anything.
+	if wantAwaiting >= wantPending {
+		t.Fatalf("the fixture has no pending submission outside the queue (%d awaiting, %d pending)", wantAwaiting, wantPending)
+	}
+	if q := rpc(t, "cases_count", w.super.Token, `{"p":{"gate":"pending","cap":100000}}`); q.Body != fmt.Sprint(wantAwaiting) {
+		t.Fatalf("the approval queue holds %s cases; gate_stats says %d await decision", q.Body, wantAwaiting)
 	}
 	// A document edit moves the registers with it.
 	data := loadCaseData(t, w.studentCase)

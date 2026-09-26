@@ -10,7 +10,8 @@ import { describe, expect, it } from "vitest";
 import { caseQueryToWire, localCasesCount, localCasesPage, localGatesPage, localGateStats, localTransfersPage, localUsersPage, userVisible, type CaseQuery, type Cursor, type RegisterCursor } from "./queries";
 import { defaultConfig } from "./defaults";
 import { generateCases } from "@/test/generate";
-import type { User } from "./types";
+import { blankCase } from "@/test/fixtures";
+import type { GateSubmission, User } from "./types";
 
 const NOW = Date.UTC(2026, 8, 25, 12);
 const cases = generateCases(300, 5, NOW);
@@ -75,7 +76,7 @@ describe("registers", () => {
     expect(localTransfersPage(cases, { safeguard: "none", limit: 200 }).rows.every((r) => r.safeguard === "None recorded")).toBe(true);
   });
 
-  it("splits gates into the pending queue (oldest first) and decisions, and agrees with the statistics", () => {
+  it("splits gates into pending submissions (oldest first) and decisions, and agrees with the statistics", () => {
     const every = (q: { status?: "pending" }) => {
       const out: ReturnType<typeof localGatesPage>["rows"] = [];
       let after: RegisterCursor | null = null;
@@ -92,11 +93,35 @@ describe("registers", () => {
     const stats = localGateStats(cases);
     expect(pending.every((g) => g.status === "pending")).toBe(true);
     expect(decided.every((g) => g.status === "approved" || g.status === "returned")).toBe(true);
-    expect(stats.pending).toBe(pending.length);
+    // Awaiting decision is the approval queue, not every submission still marked pending.
+    expect(stats.pending).toBe(localCasesCount(cases, { gate: "pending" }, config, 10_000, NOW));
+    expect(stats.pending).toBeLessThan(pending.length);
     expect(stats.decided).toBe(decided.length);
     expect(stats.approved).toBe(decided.filter((g) => g.status === "approved").length);
     for (let i = 1; i < pending.length; i++) expect((pending[i - 1].submittedAt ?? "") <= (pending[i].submittedAt ?? "")).toBe(true);
     expect(localGatesPage(cases, { gate: 19, limit: 200 }).rows.every((g) => g.gate === 19)).toBe(true);
+  });
+});
+
+describe("awaiting decision", () => {
+  const at = (d: number) => new Date(Date.UTC(2026, 8, d)).toISOString();
+  const gate = (over: Partial<GateSubmission> & { id: string }): GateSubmission => ({ gate: 16, round: 1, submittedAt: at(1), submittedBy: "c", status: "pending", ...over });
+
+  it("counts the cases the approval queue lists, not every submission still marked pending", () => {
+    const set = [
+      blankCase({ id: "open", gates: [gate({ id: "g1", submittedAt: at(3) })] }),
+      blankCase({ id: "both-gates", gates: [gate({ id: "g1", submittedAt: at(5) }), gate({ id: "g2", gate: 19, submittedAt: at(6) })] }),
+      blankCase({ id: "exited", status: "exited", gates: [gate({ id: "g1", submittedAt: at(1) })] }),
+      blankCase({ id: "on-hold", status: "hold", gates: [gate({ id: "g1", submittedAt: at(1) })] }),
+      blankCase({ id: "superseded", gates: [gate({ id: "g1", submittedAt: at(1) }), gate({ id: "g2", round: 2, status: "returned", submittedAt: at(2), decidedAt: at(4), decidedBy: "tl" })] }),
+    ];
+    const stats = localGateStats(set);
+    expect(localGatesPage(set, { status: "pending", limit: 50 }).rows).toHaveLength(6);
+    expect(stats.pending).toBe(2);
+    expect(stats.pending).toBe(localCasesCount(set, { gate: "pending" }, config, 10_000, NOW));
+    expect(localCasesPage(set, { gate: "pending", sort: "gate", limit: 50 }, config, NOW).rows.map((r) => r.id)).toEqual(["open", "both-gates"]);
+    expect(stats.oldestPendingAt).toBe(at(3));
+    expect(stats.decided).toBe(1);
   });
 });
 

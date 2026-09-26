@@ -127,7 +127,8 @@ stops the run and leaves the database at the last completed version. Migrate **b
 merging a release that depends on the new schema.
 
 The v6 release (from v5): migrate (v6 write path, RBAC, case index with its backfill, workers,
-attribution, case order stamps with their backfill: about 45 s per million cases), then deploy
+attribution, case order stamps with their backfill: about 45 s per million cases, and the
+approval statistics' "awaiting decision" counting the approval queue), then deploy
 lpl-api, then the web application, then retire the Edge Functions and cron jobs in the order
 `server/docs/CUTOVER.md` gives. The case index migration re-derives every case's summary once;
 on a large project run it in a quiet hour.

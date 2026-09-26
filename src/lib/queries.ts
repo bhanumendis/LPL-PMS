@@ -297,15 +297,22 @@ export function localGatesPage(cases: CaseRecord[], q: GateQuery): Page<GateRow,
     registerCmp(!pending), registerAfter(q.after, "gate"), clampLimit(q.limit), (r, k) => ({ at: String(k.k[0]), case: r.caseId, gate: r.id }));
 }
 
+/** public.gate_stats_compute. Pending is what the approval queue lists (open cases whose latest
+ * submission of a gate is pending), not every submission still marked pending; the decision
+ * figures count every submission in the register. */
 export function localGateStats(cases: CaseRecord[]): GateStats {
   let pending = 0, decided = 0, approved = 0, firstRoundApproved = 0, turnSum = 0, turnN = 0;
   let oldest: string | null = null;
-  for (const c of cases) for (const g of c.gates ?? []) {
-    if (g.status === "pending") {
-      pending++;
-      const at = instant(g.submittedAt);
-      if (at && (!oldest || at < oldest)) oldest = at;
-    } else if (g.status === "approved" || g.status === "returned") {
+  for (const c of cases) {
+    if (c.status === "open") {
+      const s = summarizeCase(c);
+      if (s.gatePending != null) {
+        pending++;
+        if (s.gatePendingAt && (!oldest || s.gatePendingAt < oldest)) oldest = s.gatePendingAt;
+      }
+    }
+    for (const g of c.gates ?? []) {
+      if (g.status !== "approved" && g.status !== "returned") continue;
       decided++;
       if (g.status === "approved") { approved++; if (g.round === 1) firstRoundApproved++; }
       const sub = instant(g.submittedAt);
