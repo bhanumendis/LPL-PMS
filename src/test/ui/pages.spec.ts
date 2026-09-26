@@ -7,52 +7,10 @@
  * A/AA violation (colour contrast included: a real browser computes it), and a screenshot of
  * each page is kept under test-results/ui for review.
  */
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-
-type Role = "super_admin" | "admin" | "team_leader" | "counsellor" | "student";
-interface Manifest { workspaceCase: string; studentCase: string }
-
-const manifest = JSON.parse(readFileSync(process.env.LPL_UI_MANIFEST ?? ".e2e-ui-manifest.json", "utf8")) as Manifest;
-
-const ROUTES: Record<Role, string[]> = {
-  super_admin: ["#/", "#/cases", "#/staff", "#/roles/admin", "#/audit", "#/dataprotection", "#/settings", "#/prompts"],
-  admin: ["#/", "#/cases", `#/case/${manifest.workspaceCase}`, "#/escalations", "#/staff", "#/roles/counsellor"],
-  team_leader: ["#/", "#/approvals", "#/escalations", "#/cases"],
-  counsellor: ["#/", "#/cases", `#/case/${manifest.workspaceCase}`, `#/case/${manifest.workspaceCase}/timeline`],
-  student: ["#/", "#/profile", "#/documents", "#/journey"],
-};
-
-const EMAILS: Record<Role, string> = {
-  super_admin: "root@test.local", admin: "admin@test.local", team_leader: "tl@test.local", counsellor: "c1@test.local", student: "student@test.local",
-};
-
-/** Signs in through the sign-in form, as a person would, with the theme preset. */
-async function signIn(page: Page, role: Role, theme: "light" | "dark") {
-  await page.addInitScript((t) => { localStorage.setItem("lpl:pms:theme", t); }, theme);
-  await page.goto("/");
-  await page.locator('input[autocomplete="username"]').fill(EMAILS[role]);
-  await page.locator('input[autocomplete="current-password"]').fill(process.env.LPL_E2E_PASSWORD ?? "");
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.getByRole("navigation", { name: "Main" }).first().waitFor({ timeout: 30_000 });
-}
-
-/** Waits for the page to settle: the main region is there and nothing is loading. (Never
- * "networkidle": the application polls for changes while it is open.) */
-async function settled(page: Page) {
-  await page.locator("#main").waitFor({ state: "visible", timeout: 30_000 });
-  await page.waitForTimeout(300);
-  await expect.poll(async () => page.locator('[aria-busy="true"], .skeleton').count(), { timeout: 30_000 }).toBe(0);
-  await page.waitForTimeout(400);
-}
-
-function watchErrors(page: Page): string[] {
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
-  page.on("console", (m) => { if (m.type() === "error") errors.push(`console: ${m.text()}`); });
-  return errors;
-}
+import { ROUTES, settled, signIn, slug, watchErrors, type Role } from "./support";
 
 async function check(page: Page, info: TestInfo, name: string, errors: string[]) {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -67,13 +25,13 @@ async function check(page: Page, info: TestInfo, name: string, errors: string[])
   await page.screenshot({ path: `${dir}/${name}.top.png` });
 }
 
-const slug = (hash: string) => hash.replace(/^#\/?/, "").replace(/[^a-z0-9]+/gi, "-").replace(/-+$/, "") || "home";
-
 for (const role of Object.keys(ROUTES) as Role[]) {
   test(`${role} pages`, async ({ page }, info) => {
     const theme = info.project.name.startsWith("dark") ? "dark" : "light";
     await page.emulateMedia({ reducedMotion: "reduce" });
     await signIn(page, role, theme);
+    // Held sideways, a phone scrolls to reach "Sign in"; the signed-in screen still starts at its top.
+    expect.soft(await page.evaluate(() => window.scrollY), "signed in part-way down the page").toBe(0);
     const errors = watchErrors(page);
     for (const hash of ROUTES[role]) {
       errors.length = 0;

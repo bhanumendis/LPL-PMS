@@ -74,7 +74,8 @@ export function ApprovalsPage() {
         )}
         {!queue.loading && !queue.error && <div className="panel-b"><PageFooter shown={queue.rows.length} total={st?.pending} hasMore={queue.hasMore} loadingMore={queue.loadingMore} onMore={queue.loadMore} noun="submissions" /></div>}
       </Panel>
-      <Panel title="Decisions" flush>
+      {/* Below the queue only once the queue is in: arriving rows would push it down (CLS). */}
+      {!queue.loading && <Panel title="Decisions" flush>
         {history.error ? <div className="panel-b"><ReadError error={history.error} onRetry={history.reload} /></div>
           : history.loading ? <div className="panel-b"><ListSkeleton rows={3} label="Loading decisions" /></div>
           : history.rows.length === 0 ? <div className="panel-b"><EmptyState compact glyph="inbox" title="No decisions recorded yet" /></div> : (
@@ -97,7 +98,7 @@ export function ApprovalsPage() {
           </div>
         )}
         {!history.loading && !history.error && <div className="panel-b"><PageFooter shown={history.rows.length} total={st?.decided} hasMore={history.hasMore} loadingMore={history.loadingMore} onMore={history.loadMore} noun="decisions" /></div>}
-      </Panel>
+      </Panel>}
 
       {targetCase && <ReviewDialog caseId={targetCase} onClose={() => setTargetCase(null)} />}
     </div>
@@ -206,7 +207,8 @@ export function EscalationsPage() {
         )}
         {mayRead && !clocks.loading && !clocks.error && <div className="panel-b"><PageFooter shown={clocks.rows.length} hasMore={clocks.hasMore} loadingMore={clocks.loadingMore} onMore={clocks.loadMore} noun="cases" /></div>}
       </Panel>
-      <div className="grid grid-2 stagger">
+      {/* Below the service levels only once they are in: arriving rows would push these down. */}
+      {!clocks.loading && <div className="grid grid-2 stagger">
         <Panel title={`Returned gates awaiting counsellor (${d?.open.gatesReturned ?? returned.rows.length})`} flush>
           {returned.loading ? <div className="panel-b"><ListSkeleton rows={2} label="Loading returned gates" /></div> : returned.rows.length === 0 ? <div className="panel-b"><EmptyState compact glyph="check" title="No returned gates" /></div> : (
             <ul>{returned.rows.map((c) => <li key={c.id} className="list-row flex aic jcb g2 wrap"><span><button type="button" className="row-btn ui" onClick={() => go({ page: "case", caseId: c.id, step: c.gateReturned ?? undefined })}>{c.ref}</button> · gate {c.gateReturned} · {c.studentName}</span><span className="muted ui xs">{c.counsellorId ? users[c.counsellorId]?.name : "Unassigned"}</span></li>)}</ul>
@@ -217,7 +219,7 @@ export function EscalationsPage() {
             <ul>{holds.rows.map((c) => <li key={c.id} className="list-row flex aic jcb g2 wrap"><span><button type="button" className="row-btn ui" onClick={() => go({ page: "case", caseId: c.id })}>{c.ref}</button> · {c.studentName} · review {fmtDate(c.holdReviewAt ?? undefined)}</span><span className="muted ui xs">Step {c.currentStep ?? "—"}</span></li>)}</ul>
           )}
         </Panel>
-      </div>
+      </div>}
     </div>
   );
 }

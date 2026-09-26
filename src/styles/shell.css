@@ -88,6 +88,17 @@ html[data-theme="dark"] .topbar-l .brand img { height: 34px; }
   .topbar-l .brand-sub { display: none; }
   .ctx-chip { max-width: 140px; }
 }
+/* A phone held sideways has about 390px of height and both bars float over it. They give back
+   what they can: the top bar is as tall as its controls, and the tab bar sets each label beside
+   its icon in one row. */
+@media (orientation: landscape) and (max-height: 500px) {
+  :root { --bar-h: 56px; --tabbar-h: 52px; }
+  .topbar { height: var(--bar-h); }
+  .tabbar { bottom: calc(6px + env(safe-area-inset-bottom)); }
+  .tab-item { flex-direction: row; gap: 7px; font-size: 12px; }
+  .tab-item.active::after { display: none; }
+  .tab-item .badge { top: 2px; left: auto; right: 6px; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .page-enter { animation: none; }
@@ -110,7 +121,9 @@ html[data-theme="dark"] .topbar-l .brand img { height: 34px; }
 .dock-item:hover svg { color: var(--accent-text); transform: translateY(-1px); }
 .dock-item[aria-current="page"], .dock-item.active { color: var(--ink); font-weight: 600; }
 .dock-item[aria-current="page"] svg, .dock-item.active svg { color: var(--accent-text); }
-.dock-item .badge { min-width: 18px; height: 18px; font-size: 11px; padding: 0 5px; margin-left: 2px; }
+/* On the item's corner, out of the flow: a count that arrives after the dock has painted must
+   not widen it (the whole bar would slide: layout shift). */
+.dock-item .badge { position: absolute; top: -3px; right: -2px; min-width: 18px; height: 18px; font-size: 11px; padding: 0 5px; }
 .dock.compact .dock-item { padding: 0 11px; }
 .dock.compact .dock-item:not(.active) .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .dock-pill {
@@ -158,7 +171,7 @@ html[data-theme="dark"] .topbar-l .brand img { height: 34px; }
 .rail-launch:hover { transform: translateY(-1px) scale(1.03); box-shadow: 0 10px 24px color-mix(in srgb, var(--rail-launch-to) 42%, transparent); }
 .rail-launch svg { width: 21px; height: 21px; }
 .rail-launch .badge { position: absolute; top: -5px; right: -6px; min-width: 19px; height: 19px; font-size: 10.5px; padding: 0 5px; background: var(--alert-badge); color: var(--white); box-shadow: 0 0 0 2px var(--bg); }
-.rail-strip-avg { font: 700 11px var(--ui); color: var(--hue-teal-text); background: var(--hue-teal-soft); border-radius: var(--r-pill); padding: 2px 8px; font-variant-numeric: tabular-nums; }
+.rail-strip-avg { min-width: 44px; text-align: center; font: 700 11px var(--ui); color: var(--hue-teal-text); background: var(--hue-teal-soft); border-radius: var(--r-pill); padding: 2px 8px; font-variant-numeric: tabular-nums; }
 .rail-strip-list { display: flex; flex-direction: column; gap: 10px; align-items: center; }
 .rail-strip-btn { width: 50px; height: 50px; border-radius: 50%; display: grid; place-items: center; position: relative; transition: transform var(--d-1) var(--spring); }
 .rail-strip-btn:hover { transform: translateY(-1px) scale(1.05); }

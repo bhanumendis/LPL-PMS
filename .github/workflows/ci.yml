@@ -104,7 +104,7 @@ jobs:
         run: go test -race -count=1 ./...
 
   e2e:
-    name: End to end · API client and browser (7 viewports + dark, axe)
+    name: End to end · API client and browser (8 viewports + dark, axe)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -137,11 +137,60 @@ jobs:
         run: scripts/e2e-api.sh
       - name: Every role, every release viewport
         run: scripts/e2e-ui.sh
+        env:
+          E2E_UI_SUITES: pages
       - name: Screenshots, report and logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: e2e-${{ github.sha }}
+          path: |
+            test-results/
+            .e2e-lpl-api.log
+            .e2e-gotrue.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+  vitals:
+    name: Web Vitals · LCP, CLS and INP for every role (Lighthouse conditions)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      E2E_DATABASE_URL: postgres://postgres:postgres@localhost:5432/lpl_e2e?sslmode=disable
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Browser
+        run: npx playwright install --with-deps chromium
+      # On a runner of its own, one test at a time: what it times is the application alone.
+      - name: Core Web Vitals, one viewport per layout
+        run: scripts/e2e-ui.sh
+        env:
+          E2E_UI_SUITES: vitals
+      - name: Vitals tables, report and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vitals-${{ github.sha }}
           path: |
             test-results/
             .e2e-lpl-api.log
@@ -228,7 +277,7 @@ jobs:
   image:
     name: Publish lpl-api image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [web, server, e2e, secrets, pipeline, rehearsal]
+    needs: [web, server, e2e, vitals, secrets, pipeline, rehearsal]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -322,7 +371,7 @@ jobs:
 
   deploy-web:
     name: Deploy web application (GitHub Pages)
-    needs: [web, server, e2e, secrets, pipeline, rehearsal, deploy-api]
+    needs: [web, server, e2e, vitals, secrets, pipeline, rehearsal, deploy-api]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.VITE_API_URL != ''
     runs-on: ubuntu-latest
     timeout-minutes: 15

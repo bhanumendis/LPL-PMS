@@ -80,4 +80,13 @@ describe("performance guards", () => {
     // Endless animations pause in a background tab.
     expect(baseCss).toMatch(/html\[data-hidden\] \*[^{]*\{ animation-play-state: paused !important; \}/);
   });
+
+  it("only a loading indicator animates without end (an idle page draws no frames)", () => {
+    // An endless animation under the glass surfaces makes the browser redraw their blur on every
+    // frame and delays the paint after every interaction (INP; src/test/ui/vitals.spec.ts).
+    const files = [baseCss, componentsCss, shellCss, pagesCss];
+    const endless = files.flatMap((css) => [...css.matchAll(/([^{}]+)\{[^{}]*animation:[^;{}]*\binfinite\b[^{}]*\}/g)].map((m) => m[1].replace(/\/\*[\s\S]*?\*\//g, "").trim()));
+    expect(endless.length).toBeGreaterThan(0);
+    for (const selector of endless) expect(selector, selector).toMatch(/\.(skeleton|spinner)\b/);
+  });
 });

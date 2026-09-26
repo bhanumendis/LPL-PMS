@@ -3,11 +3,13 @@
 # Copyright © Bhanu Mendis - LGH IT
 #
 # The browser suite (src/test/ui, Playwright): the production bundle, built for a local
-# lpl-api over the generated fixture, visited as every role at the seven release viewports
-# (1440×900 … 360×800) with axe (WCAG 2.2 A/AA, contrast included), overflow and console
-# checks, and a screenshot of every page for review (test-results/ui).
+# lpl-api over the generated fixture, visited as every role at the eight release viewports
+# (1440×900 … 360×800, and a phone turned sideways) with axe (WCAG 2.2 A/AA, contrast
+# included), overflow and console checks, and a screenshot of every page for review
+# (test-results/ui); then its Core Web Vitals, measured under Lighthouse's network and CPU
+# conditions (src/test/ui/vitals.spec.ts).
 #
-#   E2E_DATABASE_URL=postgres://…/lpl_e2e scripts/e2e-ui.sh [playwright args]
+#   E2E_DATABASE_URL=postgres://…/lpl_e2e [E2E_UI_SUITES="pages vitals"] scripts/e2e-ui.sh [playwright args]
 #
 # See scripts/lib/e2e-backend.sh for what happens to the database.
 set -euo pipefail
@@ -24,5 +26,16 @@ npx vite preview --port "$UI_PORT" --strictPort --host 127.0.0.1 > .e2e-ui-web.l
 WEB_PID=$!
 for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$UI_PORT/" >/dev/null 2>&1 && break; sleep 0.2; done
 
-LPL_UI_URL="http://127.0.0.1:$UI_PORT" LPL_E2E_PASSWORD="$E2E_PASSWORD" LPL_UI_MANIFEST=".e2e-ui-manifest.json" \
-  npx playwright test "$@"
+export LPL_UI_URL="http://127.0.0.1:$UI_PORT" LPL_E2E_PASSWORD="$E2E_PASSWORD" LPL_UI_MANIFEST=".e2e-ui-manifest.json"
+# E2E_UI_SUITES picks what runs (default both; CI runs each in its own job): "pages" in
+# parallel, then "vitals" (vitals.spec.ts) one test at a time, so what they time is the
+# application and not the tests beside them (playwright.config.ts). Either failing fails.
+status=0
+for suite in ${E2E_UI_SUITES:-pages vitals}; do
+  case "$suite" in
+    pages) npx playwright test "$@" || status=$? ;;
+    vitals) LPL_UI_RUN=vitals npx playwright test "$@" || status=$? ;;
+    *) echo "unknown suite: $suite (pages, vitals)" >&2; exit 2 ;;
+  esac
+done
+exit "$status"

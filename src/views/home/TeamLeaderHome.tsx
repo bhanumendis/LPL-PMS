@@ -71,7 +71,8 @@ export function TeamLeaderHome() {
               </ul>
             )}
           </Panel>
-          {can("escalation.view") && (
+          {/* What sits below the queue waits for it: its rows would push it down (CLS). */}
+          {!pending.loading && can("escalation.view") && (
             <Panel title="Service-level exposure" action={<button type="button" className="btn btn-ghost btn-sm" onClick={() => go({ page: "escalations" })}>Escalations <ArrowRight aria-hidden /></button>}>
               {d.urgent.length === 0 ? <EmptyState compact glyph="check" title="No breaches" reason="Cases within their service levels do not appear here." /> : urgent.loading ? <ListSkeleton rows={2} label="Loading breaches" /> : (
                 <ul className="esc-strip" role="list">
@@ -86,14 +87,17 @@ export function TeamLeaderHome() {
           )}
         </div>
         <div className="home-side">
-          <Panel title="Open cases by stage">
-            <StageFlow byStage={d.byStage} selected={stage} onSelect={(id) => { setStage(id === stage ? undefined : id); if (id !== stage) go({ page: "cases", id: `stage:${id}` }); }} />
-          </Panel>
-          <Panel title="Counsellor load">
-            <CounsellorLoad counsellors={counsellors} load={d.counsellors} />
-          </Panel>
+          {/* On a phone this column follows the queue; the same wait keeps it from jumping. */}
+          {!pending.loading && <>
+            <Panel title="Open cases by stage">
+              <StageFlow byStage={d.byStage} selected={stage} onSelect={(id) => { setStage(id === stage ? undefined : id); if (id !== stage) go({ page: "cases", id: `stage:${id}` }); }} />
+            </Panel>
+            <Panel title="Counsellor load">
+              <CounsellorLoad counsellors={counsellors} load={d.counsellors} />
+            </Panel>
+          </>}
         </div>
-        <PerformanceSection dashboard={d} canRead={can("analytics.read")} canDownload={can("analytics.download")} onExport={() => { downloadText("lpl-overview.csv", overviewCsv(d)); void audit(EVENTS.overviewExported()); }} scope="team" />
+        {!pending.loading && !urgent.loading && <PerformanceSection dashboard={d} canRead={can("analytics.read")} canDownload={can("analytics.download")} onExport={() => { downloadText("lpl-overview.csv", overviewCsv(d)); void audit(EVENTS.overviewExported()); }} scope="team" />}
       </div>
     </div>
   );

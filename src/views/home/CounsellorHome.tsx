@@ -54,15 +54,19 @@ export function CounsellorHome() {
           <Panel title="Needs attention" action={nFlagged > head.rows.length ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => go({ page: "cases", id: "attention" })}>All {nFlagged >= 1000 ? "1,000+" : nFlagged}</button> : undefined}>
             {head.error ? <ReadError error={head.error} onRetry={head.reload} /> : head.loading ? <ListSkeleton rows={3} label="Loading what needs attention" /> : <AttentionQueue items={attention} signals={signals} />}
           </Panel>
-          <PerformanceSection dashboard={d} canRead scope="mine" prefKey="lpl:pms:perf-mine" />
+          {/* What sits below the queue waits for it: its rows would push it down (CLS). */}
+          {!head.loading && <PerformanceSection dashboard={d} canRead scope="mine" prefKey="lpl:pms:perf-mine" />}
         </div>
         <div className="home-side">
-          <Panel title="Caseload by stage">
-            <StageFlow byStage={d.byStage} selected={stage} onSelect={(id) => { setStage(id === stage ? undefined : id); if (id !== stage) go({ page: "cases", id: `stage:${id}` }); }} label="My open cases by stage" />
-          </Panel>
-          <Panel title="Recent activity on my open cases">
-            {recentRows.loading ? <ListSkeleton rows={3} label="Loading recent activity" /> : <MovementFeed items={recent} emptyReason="Steps, uploads and decisions on your cases appear here." />}
-          </Panel>
+          {/* On a phone this column follows the queue; the same wait keeps it from jumping. */}
+          {!head.loading && <>
+            <Panel title="Caseload by stage">
+              <StageFlow byStage={d.byStage} selected={stage} onSelect={(id) => { setStage(id === stage ? undefined : id); if (id !== stage) go({ page: "cases", id: `stage:${id}` }); }} label="My open cases by stage" />
+            </Panel>
+            <Panel title="Recent activity on my open cases">
+              {recentRows.loading ? <ListSkeleton rows={3} label="Loading recent activity" /> : <MovementFeed items={recent} emptyReason="Steps, uploads and decisions on your cases appear here." />}
+            </Panel>
+          </>}
         </div>
       </div>
     </div>

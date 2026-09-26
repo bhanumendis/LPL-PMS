@@ -15,7 +15,7 @@ npm run contrast     # WCAG AAA verification of every design-token pair, both th
 npm run build        # verify, then -> dist/LPL_Placement_Management_System.html (single file) and dist/sw.js
                      # a production build needs VITE_API_URL (https) and VITE_API_ANON_KEY
 npm run test:e2e     # the client against a real lpl-api and Postgres (scripts/e2e-api.sh)
-npm run test:ui      # every role at seven viewports, axe WCAG 2.2 AA (scripts/e2e-ui.sh)
+npm run test:ui      # every role at eight viewports, axe WCAG 2.2 AA, then Core Web Vitals (scripts/e2e-ui.sh)
 ```
 
 More: `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md` (release, rollback, migrations),

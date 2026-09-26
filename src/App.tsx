@@ -129,7 +129,9 @@ export default function App() {
     } else if (window.location.hash === h) setRoute(r); else window.location.hash = h;
     window.scrollTo({ top: 0, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }, []);
-  const signIn = useCallback((u: User) => { void store.audit(EVENTS.sessionSignIn(u), u).catch(() => undefined); setUserId(u.id); writeSession(u.id); window.location.hash = "#/"; setRoute({ page: "home" }); }, []);
+  // Signing in or out swaps the whole screen: the new one starts at its top, not at the offset
+  // the form was scrolled to (on a phone held sideways, the Sign in button sits below the fold).
+  const signIn = useCallback((u: User) => { void store.audit(EVENTS.sessionSignIn(u), u).catch(() => undefined); setUserId(u.id); writeSession(u.id); window.location.hash = "#/"; setRoute({ page: "home" }); window.scrollTo(0, 0); }, []);
   const signOut = useCallback(() => {
     // Revoke this device's push subscription (best effort, while the token is still valid), then end the session.
     const uid = user?.id;
@@ -139,7 +141,7 @@ export default function App() {
       try { const endpoint = await unsubscribeThisDevice(); if (endpoint && uid) await store.revokePushSubscription(endpoint, uid); } catch { /* best effort */ }
       finally { void store.server?.signOut(); }
     })();
-    setUserId(null); writeSession(null); window.location.hash = "#/"; setRoute({ page: "home" });
+    setUserId(null); writeSession(null); window.location.hash = "#/"; setRoute({ page: "home" }); window.scrollTo(0, 0);
   }, [user]);
   const audit = useCallback(async (event: AuditEvent) => {
     if (!user) return;

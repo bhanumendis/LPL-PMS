@@ -192,7 +192,8 @@ export function StudentRail({ mode, open, onOpenChange }: StudentRailProps) {
             </li>
           ))}
         </ul>
-        {total > STRIP_MAX && <button type="button" className="rail-more" onClick={() => reveal()} aria-label={`Show all ${total} students`}>+{total - STRIP_MAX}</button>}
+        {/* Once the strip holds its students: the count arrives first, and "+n" would jump down. */}
+        {!page.loading && total > STRIP_MAX && <button type="button" className="rail-more" onClick={() => reveal()} aria-label={`Show all ${total} students`}>+{total - STRIP_MAX}</button>}
       </aside>
       <SlideOver open={open} onClose={() => onOpenChange(false)}>
         {header(<button type="button" className="icon-btn sm" aria-label="Close my students" onClick={() => onOpenChange(false)}><PanelLeftClose aria-hidden /></button>)}

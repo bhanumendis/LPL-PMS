@@ -15,7 +15,7 @@ export const D3_MS = 320;
 
 /**
  * Two page-wide details the stylesheet cannot manage alone:
- * - a background tab pauses its endless animations (backdrop drift, shimmer, spinners) rather
+ * - a background tab pauses its endless animations (loading shimmer and spinners) rather
  *   than spend the battery on frames nobody sees (`html[data-hidden]`, base.css);
  * - iOS Safari applies :active only on a page that listens for touches, so without this every
  *   press on an iPhone would go unanswered.

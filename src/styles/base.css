@@ -11,6 +11,9 @@ body {
   -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
   transition: background var(--d-4) var(--ease-out), color var(--d-4) var(--ease-out);
 }
+/* The ground's glow holds still. It used to drift (2% over 80 s, never seen), which made the
+   browser redraw every glass surface over it on every frame, forever, and delayed the paint
+   after every tap and key press by up to 150 ms (src/test/ui/vitals.spec.ts measures INP). */
 body::before {
   content: ""; position: fixed; inset: -12%; z-index: 0; pointer-events: none;
   background:
@@ -18,9 +21,7 @@ body::before {
     radial-gradient(42rem 32rem at 84% 78%, var(--glow-2), transparent 64%),
     radial-gradient(36rem 28rem at 66% 8%, var(--glow-3), transparent 66%);
   filter: blur(10px);
-  animation: drift 80s ease-in-out infinite alternate;
 }
-@keyframes drift { from { transform: translate3d(0, 0, 0) scale(1); } to { transform: translate3d(2%, 3%, 0) scale(1.06); } }
 
 h1, h2, h3, h4, button, input, select, textarea, th, .ui { font-family: var(--ui); }
 h1, h2, h3, h4 { margin: 0; line-height: 1.22; letter-spacing: -0.015em; color: var(--ink); font-weight: 600; }
@@ -92,6 +93,9 @@ code, kbd, pre { font-family: var(--mono); }
 .panel { border-radius: var(--r-lg); position: relative; }
 .panel > .panel-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px clamp(20px, 1.5vw, 30px) 12px; border-bottom: 1px solid var(--hair); }
 .panel > .panel-h h2 { font-size: 14.5px; }
+/* A header action keeps its 44px target but not the height: it reaches into the padding, so an
+   action that appears once a count arrives does not push the panel down (layout shift). */
+.panel > .panel-h .btn-sm { margin-block: -13px; }
 /* Inner gutters grew with the panel; a 1600px panel had the same 20px inset as a phone. */
 .panel > .panel-b { padding: 18px clamp(20px, 1.5vw, 30px); }
 .panel > .panel-b.flush { padding: 0; }
@@ -390,7 +394,7 @@ input[type="date"].input, input[type="month"].input { min-width: 0; }
 @media (max-width: 640px) { .modal-scrim.is-leaving .modal { animation-name: sheet-out; } }
 .toast.is-leaving { animation: rise-out var(--d-2) var(--ease-in) both; pointer-events: none; }
 .fade-in { animation: fade var(--d-3) var(--ease-out) both; }
-/* A background tab stops its endless animations (backdrop drift, shimmer, spinners); the
+/* A background tab stops its endless animations (shimmer, spinners); the
    attribute is kept by src/lib/motion.ts. */
 html[data-hidden] *, html[data-hidden] *::before, html[data-hidden] *::after { animation-play-state: paused !important; }
 
@@ -407,7 +411,6 @@ html[data-hidden] *, html[data-hidden] *::before, html[data-hidden] *::after { a
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
-  body::before { animation: none; }
   .modal-b { scroll-behavior: auto; }
 }
 @media print {
