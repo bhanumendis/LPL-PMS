@@ -16,3 +16,4 @@ export * from "./progress";
 export * from "./segmented";
 export * from "./table";
 export * from "./paging";
+export * from "./presence";

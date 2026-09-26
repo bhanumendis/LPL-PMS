@@ -18,6 +18,7 @@ import "./styles/shell.css";
 import "./styles/pages.css";
 import App from "./App";
 import { installGlobalErrorHandlers, reportError } from "./lib/errors";
+import { installMotion } from "./lib/motion";
 
 /**
  * Last line of defence: a render error in one view must never leave a blank page. The
@@ -51,6 +52,7 @@ window.__LPL_PMS__ = { product: "Lyceum Placements - Placement Management System
 console.info("%cLyceum Placements - Placement Management System\n%cDeveloped by Bhanu Mendis - Group IT", "font-weight:600", "font-weight:400");
 
 installGlobalErrorHandlers();
+installMotion();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

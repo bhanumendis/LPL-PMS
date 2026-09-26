@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useRef, useState } from "react";
-import { Layer, shouldDismissSheet } from "./layer";
+import { Layer, rubberBand, shouldDismissSheet } from "./layer";
 import { BP } from "../hooks";
 
 function Host({ onClose, variant = "popover" }: { onClose?: () => void; variant?: "auto" | "popover" | "sheet" }) {
@@ -55,10 +55,21 @@ describe("Layer", () => {
     expect(document.body.querySelector(".sheet")).toBeTruthy();
     expect(container.querySelector(".layer")).toBeNull();
   });
-  it("a sheet closes when dragged past 120 px or flicked, and stays otherwise", () => {
-    expect(shouldDismissSheet(130, 1000)).toBe(true);
-    expect(shouldDismissSheet(60, 50)).toBe(true);
-    expect(shouldDismissSheet(60, 400)).toBe(false);
-    expect(shouldDismissSheet(0, 10)).toBe(false);
+  it("a sheet closes when let go past 120 px or thrown down, and stays otherwise", () => {
+    expect(shouldDismissSheet(130, 0)).toBe(true);
+    expect(shouldDismissSheet(60, 1.2)).toBe(true);
+    expect(shouldDismissSheet(60, 0.15)).toBe(false);
+    expect(shouldDismissSheet(0, 5)).toBe(false);
+    // Thrown upwards is never a dismissal, however fast.
+    expect(shouldDismissSheet(-50, 3)).toBe(false);
+  });
+  it("pulled past its resting place a sheet rubber-bands: follows at first, never passes the limit", () => {
+    expect(rubberBand(0, 40)).toBe(0);
+    expect(rubberBand(-5, 40)).toBe(0);
+    const pulls = [2, 10, 40, 120, 1000, 100000].map((x) => rubberBand(x, 40));
+    for (let i = 1; i < pulls.length; i++) expect(pulls[i]).toBeGreaterThan(pulls[i - 1]);
+    expect(pulls[0]).toBeGreaterThan(1);
+    expect(pulls[pulls.length - 1]).toBeLessThan(40);
+    expect(rubberBand(40, 40)).toBeLessThan(20);
   });
 });

@@ -19,7 +19,7 @@ import { caseScopeOf } from "@/lib/rbac";
 import { SEARCH_MIN, useDebounced, useLocalPref } from "@/lib/hooks";
 import { useRowSignals, type CaseSignals } from "@/lib/signals";
 import { useCase, useCaseCount, useCasePage, useDashboard } from "@/lib/useRead";
-import { EmptyState, Layer, ListSkeleton, PageFooter, ReadError, Tooltip, useFocusTrap } from "@/lib/ui";
+import { EmptyState, EXIT_MS, Layer, leavingAttrs, ListSkeleton, PageFooter, ReadError, Tooltip, useFocusTrap, useLastOpen, usePresence } from "@/lib/ui";
 import type { OrgConfig, User } from "@/lib/types";
 import { ProgressAvatar, RailRow, stepLine } from "./RailRow";
 import { useFlip } from "@/lib/motion";
@@ -194,12 +194,10 @@ export function StudentRail({ mode, open, onOpenChange }: StudentRailProps) {
         </ul>
         {total > STRIP_MAX && <button type="button" className="rail-more" onClick={() => reveal()} aria-label={`Show all ${total} students`}>+{total - STRIP_MAX}</button>}
       </aside>
-      {open && (
-        <SlideOver onClose={() => onOpenChange(false)}>
-          {header(<button type="button" className="icon-btn sm" aria-label="Close my students" onClick={() => onOpenChange(false)}><PanelLeftClose aria-hidden /></button>)}
-          {panelBody}
-        </SlideOver>
-      )}
+      <SlideOver open={open} onClose={() => onOpenChange(false)}>
+        {header(<button type="button" className="icon-btn sm" aria-label="Close my students" onClick={() => onOpenChange(false)}><PanelLeftClose aria-hidden /></button>)}
+        {panelBody}
+      </SlideOver>
     </>
   );
 }
@@ -211,13 +209,17 @@ function FlipList({ order, children }: { order: string; children: ReactNode }) {
   return <ul ref={ref} className="rail-list" role="list">{children}</ul>;
 }
 
-function SlideOver({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+function SlideOver({ open, children, onClose }: { open: boolean; children: ReactNode; onClose: () => void }) {
   const ref = useRef<HTMLElement>(null);
-  useFocusTrap(ref as React.RefObject<HTMLElement>, true, { onEscape: onClose });
+  const { mounted, leaving } = usePresence(open, EXIT_MS.sheet);
+  const content = useLastOpen(children, open);
+  useFocusTrap(ref as React.RefObject<HTMLElement>, open, { onEscape: onClose });
+  if (!mounted) return null;
+  const out = leaving ? " is-leaving" : "";
   return createPortal(
     <>
-      <div className="rail-scrim" onMouseDown={onClose} />
-      <aside ref={ref} className="rail over float float-strong" aria-label="My students" role="dialog" aria-modal="true" tabIndex={-1}>{children}</aside>
+      <div className={`rail-scrim${out}`} onMouseDown={onClose} />
+      <aside ref={ref} className={`rail over float float-strong${out}`} aria-label="My students" role="dialog" aria-modal="true" tabIndex={-1} {...leavingAttrs(leaving)}>{content}</aside>
     </>,
     document.body,
   );

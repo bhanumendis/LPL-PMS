@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createElement, useRef } from "react";
 import { render } from "@testing-library/react";
-import { runViewTransition, setTransitionSource, useFlip, CASE_HEAD_TRANSITION } from "./motion";
+import { installMotion, runViewTransition, setTransitionSource, useFlip, CASE_HEAD_TRANSITION } from "./motion";
 
 type Doc = { startViewTransition?: unknown };
 
@@ -71,5 +71,25 @@ describe("motion", () => {
     expect(animate).toHaveBeenCalledTimes(2);
     expect(animate.mock.calls[0][0][0].transform).toMatch(/translate\(0px, -?40px\)/);
     proto.animate = had;
+  });
+
+  it("a background tab is marked so its endless animations pause, and touches are listened for", () => {
+    let state: DocumentVisibilityState = "visible";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => state);
+    const listen = vi.spyOn(document, "addEventListener");
+    const uninstall = installMotion();
+    const root = document.documentElement;
+    expect(root.hasAttribute("data-hidden")).toBe(false);
+    expect(listen).toHaveBeenCalledWith("touchstart", expect.any(Function), { passive: true });
+    state = "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(root.hasAttribute("data-hidden")).toBe(true);
+    state = "visible";
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(root.hasAttribute("data-hidden")).toBe(false);
+    uninstall();
+    state = "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(root.hasAttribute("data-hidden")).toBe(false);
   });
 });

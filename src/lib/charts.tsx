@@ -76,7 +76,7 @@ export function Donut({ data, size = 170, stroke = 26, centerLabel, centerSub, t
         const offset = -acc * circ;
         acc += frac;
         const dim = active != null && active !== i;
-        return <circle key={d.label} className="donut-seg" style={{ opacity: dim ? 0.35 : 1, transition: "opacity var(--d-2) ease, stroke-dashoffset var(--d-chart) var(--ease), stroke-dasharray var(--d-chart) var(--ease)" }} cx={size / 2} cy={size / 2} r={r} fill="none" stroke={d.color ?? CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={active === i ? stroke + 4 : stroke} strokeDasharray={dash} strokeDashoffset={offset} transform={`rotate(-90 ${size / 2} ${size / 2})`} onMouseEnter={() => onActive?.(i)}><title>{`${d.label}: ${d.n} (${Math.round(frac * 100)}%)`}</title></circle>;
+        return <circle key={d.label} className="donut-seg" style={{ opacity: dim ? 0.35 : 1, transition: "opacity var(--d-2) var(--ease-out), stroke-dashoffset var(--d-chart) var(--ease-out), stroke-dasharray var(--d-chart) var(--ease-out)" }} cx={size / 2} cy={size / 2} r={r} fill="none" stroke={d.color ?? CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={active === i ? stroke + 4 : stroke} strokeDasharray={dash} strokeDashoffset={offset} transform={`rotate(-90 ${size / 2} ${size / 2})`} onMouseEnter={() => onActive?.(i)}><title>{`${d.label}: ${d.n} (${Math.round(frac * 100)}%)`}</title></circle>;
       })}
       <text className="ring-num" x="50%" y={centerSub || shown ? "46%" : "50%"} textAnchor="middle" dominantBaseline="central">{shown ? shown.n : centerLabel ?? total}</text>
       {(shown || centerSub) && <text className="ring-lbl" x="50%" y="62%" textAnchor="middle" dominantBaseline="central">{shown ? (shown.label.length > 16 ? shown.label.slice(0, 15) + "…" : shown.label) : centerSub}</text>}
@@ -221,7 +221,7 @@ export function AreaChart({ labels, series, height = 190, title, ranges, range, 
           {labels.map((l, i) => (n <= 14 || i % 2 === 0) && <text key={l + i} className="axis" x={x(i)} y={h - 8} textAnchor="middle">{l}</text>)}
           {hover != null && <line className="crosshair" x1={x(hover)} x2={x(hover)} y1={padT} y2={h - padB} />}
           {series.map((s, si) => (
-            <g key={s.name} style={{ opacity: mounted ? 1 : 0, transition: "opacity var(--d-chart) ease" }}>
+            <g key={s.name} style={{ opacity: mounted ? 1 : 0, transition: "opacity var(--d-chart) var(--ease-out)" }}>
               {si === 0 && <path d={`${path(s.values)} L${x(n - 1)},${y(0)} L${x(0)},${y(0)} Z`} fill={`url(#g${id})`} />}
               <path className={`line ${s.tone ?? ""}`} d={path(s.values)} />
               {s.values.map((v, i) => (

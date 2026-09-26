@@ -3,7 +3,8 @@
  * Developed by Bhanu Mendis - Group IT
  *
  * Performance guards: a quiet poll re-renders nothing, the workspace load no longer carries
- * the audit log, and blur stays on the float tier.
+ * the audit log, blur stays on the float tier, and motion stays on the compositor and the
+ * token scale.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, render } from "@testing-library/react";
@@ -11,6 +12,7 @@ import baseCss from "@/styles/base.css?raw";
 import componentsCss from "@/styles/components.css?raw";
 import shellCss from "@/styles/shell.css?raw";
 import pagesCss from "@/styles/pages.css?raw";
+import tokensCss from "@/styles/tokens.css?raw";
 import { store } from "@/lib/store";
 import { useStoreSelect } from "@/lib/useStore";
 import { SupabaseBackend } from "@/lib/server";
@@ -59,5 +61,23 @@ describe("performance guards", () => {
     const files = [baseCss, componentsCss, shellCss, pagesCss];
     const blurs = files.flatMap((css) => css.match(/(?<!-webkit-)backdrop-filter:(?!\s*none)[^;]+;/g) ?? []);
     expect(blurs.length).toBeLessThanOrEqual(6);
+  });
+
+  it("motion animates only transform and opacity, on the token curves, and never `all`", () => {
+    const files = [baseCss, componentsCss, shellCss, pagesCss];
+    const keyframes = files.flatMap((css) => css.match(/@keyframes [\w-]+ \{.*\}/g) ?? []);
+    expect(keyframes.length).toBeGreaterThan(10);
+    for (const k of keyframes) {
+      const props = [...k.replace(/^@keyframes [\w-]+ \{/, "").matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1]);
+      expect(props.filter((p) => p !== "transform" && p !== "opacity"), k).toEqual([]);
+    }
+    for (const css of files) {
+      expect(css).not.toMatch(/transition:\s*all\b/);
+      // Curves are named in tokens.css; a raw one elsewhere is a curve nobody else uses.
+      expect(css).not.toMatch(/cubic-bezier\(/);
+    }
+    expect(tokensCss).toMatch(/--ease-out:/);
+    // Endless animations pause in a background tab.
+    expect(baseCss).toMatch(/html\[data-hidden\] \*[^{]*\{ animation-play-state: paused !important; \}/);
   });
 });

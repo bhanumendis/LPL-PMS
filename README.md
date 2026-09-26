@@ -88,7 +88,7 @@ The audit log is no longer part of the workspace snapshot. The **Audit log** pag
 
 ## Testing
 
-`npm run verify` runs typecheck, eslint, the 177 unit and component tests (logic, store, the
+`npm run verify` runs typecheck, eslint, the 184 unit and component tests (logic, store, the
 server adapter's wire contract, views, an axe WCAG A/AA suite in jsdom for every role in both
 themes, performance guards) and the contrast check. The Go suites (`server/`), the end-to-end
 suites (`npm run test:e2e`, `npm run test:ui`) and what each layer proves are listed in

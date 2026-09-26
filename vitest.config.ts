@@ -17,7 +17,8 @@ export default mergeConfig(
       environment: "jsdom",
       setupFiles: ["./src/test/setup.ts"],
       include: ["src/**/*.test.{ts,tsx}"],
-      css: false,
+      // Stylesheets are not applied in jsdom, but the guards that read their source (`?raw`) get it.
+      css: { include: [/\.css\?raw$/] },
       env: noConnection,
     },
   }),

@@ -105,3 +105,76 @@ test("sign-in entrance: plays once, settles, and never runs under reduced motion
   expect(await anim()).toBe("none");
   expect(await page.locator(".auth-side > *").first().evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
 });
+
+/** Records, in the page, whether a node carrying `.is-leaving` appeared and how long it stayed. */
+async function watchLeaving(page: Page) {
+  await page.evaluate(() => {
+    const w = window as unknown as { __leave: { seen: number; gone: number } };
+    w.__leave = { seen: 0, gone: 0 };
+    new MutationObserver(() => {
+      const on = document.querySelector(".is-leaving");
+      if (on && !w.__leave.seen) w.__leave.seen = performance.now();
+      if (!on && w.__leave.seen && !w.__leave.gone) w.__leave.gone = performance.now();
+    }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] });
+  });
+  return () => page.evaluate(() => (window as unknown as { __leave: { seen: number; gone: number } }).__leave);
+}
+
+test("overlays leave the way they came; on a phone the sheet follows the finger, rubber-bands and can be thrown away", async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await signIn(page, "counsellor", "light");
+  await settled(page);
+  const phone = (page.viewportSize()?.width ?? 1440) < 768;
+  const account = page.getByRole("button", { name: /^Account:/ });
+  const dialog = page.getByRole("dialog", { name: "Account" });
+  const translateY = () => page.locator(".sheet").evaluate((el) => new DOMMatrixReadOnly(getComputedStyle(el).transform).m42);
+
+  // Closing: out of the accessibility tree at once, on screen for its exit, then gone.
+  await account.click();
+  await expect(dialog).toBeVisible();
+  await page.waitForTimeout(400);
+  const leave = await watchLeaving(page);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(account).toBeFocused();
+  await expect.poll(async () => (await leave()).gone, { timeout: 3000 }).toBeGreaterThan(0);
+  const { seen, gone } = await leave();
+  expect(seen).toBeGreaterThan(0);
+  expect(gone - seen).toBeGreaterThanOrEqual(phone ? 150 : 90);
+
+  if (phone) {
+    await account.click();
+    await expect(dialog).toBeVisible();
+    await page.waitForTimeout(500);
+    const grip = (await page.locator(".sheet-grip").boundingBox())!;
+    const x = grip.x + grip.width / 2;
+    const y = grip.y + grip.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    // Down: it follows the finger one to one.
+    await page.mouse.move(x, y + 50, { steps: 10 });
+    expect(Math.round(await translateY())).toBe(50);
+    // Up, past its resting place: it resists, and never travels more than 40px.
+    await page.mouse.move(x, y - 200, { steps: 20 });
+    const up = await translateY();
+    expect(up).toBeLessThan(-5);
+    expect(up).toBeGreaterThan(-40);
+    // Let go slowly near home: it stays, and springs back to rest.
+    await page.mouse.move(x, y + 20, { steps: 20 });
+    await page.waitForTimeout(150);
+    await page.mouse.up();
+    await expect(dialog).toBeVisible();
+    await expect.poll(async () => Math.abs(await translateY()), { timeout: 3000 }).toBeLessThan(0.5);
+    // A quick flick down throws it away, and the throw carries on instead of restarting.
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x, y + 30, { steps: 2 });
+    await page.mouse.move(x, y + 70, { steps: 2 });
+    await page.mouse.up();
+    await expect(dialog).toHaveCount(0);
+    expect(await page.locator(".sheet[data-thrown]").count()).toBeLessThanOrEqual(1);
+    await expect(page.locator(".sheet")).toHaveCount(0, { timeout: 3000 });
+  }
+  expect(errors).toEqual([]);
+});

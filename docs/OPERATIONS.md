@@ -38,7 +38,7 @@ How the system is built, released, rolled back and run. The pipeline lives in
 
 ## Releasing
 
-Every push and pull request runs the gates: typecheck, lint, 177 unit and component tests,
+Every push and pull request runs the gates: typecheck, lint, 184 unit and component tests,
 contrast, schema and parity-fixture freshness, attribution, `npm audit` of production
 dependencies, production build and bundle budget; Go formatting, vet, staticcheck, govulncheck
 and the unit, integration and migration suites against Postgres 16; the end-to-end suites (the

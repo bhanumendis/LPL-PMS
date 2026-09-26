@@ -3,13 +3,16 @@
  * Developed by Bhanu Mendis - Group IT
  *
  * Layer: a popover anchored to its trigger on wide screens, a bottom sheet on phones. Opens
- * from the anchor's corner (transform-origin), traps focus, closes on Escape and outside click.
+ * from the anchor's corner (transform-origin), traps focus, closes on Escape and outside click,
+ * and leaves the way it came (presence.ts). A sheet follows the finger: past its resting place
+ * it rubber-bands, and a throw that dismisses it carries on at the speed it was let go.
  * Tooltip: a delayed, non-interactive label for icon-only controls.
  */
 import React, { cloneElement, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { BP, useMediaQuery } from "../hooks";
 import { useFocusTrap } from "./focus";
+import { EXIT_MS, leavingAttrs, useLastOpen, usePresence } from "./presence";
 
 export type LayerPlacement = "bottom-end" | "bottom-start" | "bottom" | "center" | "left";
 
@@ -33,16 +36,31 @@ export interface LayerProps {
 
 interface Pos { top: number; left: number; origin: string }
 
-/** A sheet dragged down past 120 px, or flicked faster than 0.6 px/ms, closes. */
-export function shouldDismissSheet(dy: number, ms: number): boolean {
-  return dy > 120 || (ms > 0 && dy > 0 && dy / ms > 0.6);
+/** A sheet let go more than 120 px down, or thrown down faster than 0.6 px/ms, closes. */
+export function shouldDismissSheet(dy: number, velocity: number): boolean {
+  return dy > 120 || (dy > 0 && velocity > 0.6);
 }
+
+/**
+ * Travel past a boundary meets growing resistance and never exceeds `limit` (UIScrollView's
+ * rubber-band curve, c = 0.55): the first pixels follow the finger, the rest barely move.
+ */
+export function rubberBand(overshoot: number, limit: number, c = 0.55): number {
+  return overshoot <= 0 ? 0 : (overshoot * limit * c) / (limit + c * overshoot);
+}
+
+/** How far a sheet can be pulled up: the part of it kept below the screen (.sheet, 40px). */
+const SHEET_OVERSCROLL = 40;
+/** A finger that rested this long before lifting threw nothing. */
+const THROW_STALE_MS = 80;
 
 export function Layer({ open, onClose, anchorRef, label, variant = "auto", placement = "bottom-end", width = 360, modal = false, trapFocus = true, children, className = "", id }: LayerProps) {
   const isMobile = useMediaQuery(BP.mobile);
   const asSheet = variant === "sheet" || (variant === "auto" && isMobile);
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<Pos | null>(null);
+  const { mounted, leaving } = usePresence(open, asSheet ? EXIT_MS.sheet : EXIT_MS.popover);
+  const content = useLastOpen(children, open);
   useFocusTrap(ref, open && trapFocus, { onEscape: onClose });
 
   const w = typeof window !== "undefined" ? Math.min(width, window.innerWidth - 16) : width;
@@ -83,35 +101,56 @@ export function Layer({ open, onClose, anchorRef, label, variant = "auto", place
     return () => document.removeEventListener("mousedown", h);
   }, [open, modal, asSheet, onClose, anchorRef]);
 
-  const drag = useRef<{ y: number; t: number; dy: number } | null>(null);
+  // The sheet tracks the finger 1:1 downwards and rubber-bands upwards. `v` is the release
+  // velocity (px/ms, smoothed over the last moves), not the average over the whole drag.
+  const drag = useRef<{ y: number; dy: number; t: number; v: number } | null>(null);
   const onHandleDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    drag.current = { y: e.clientY, t: e.timeStamp, dy: 0 };
+    if (!open) return;
+    drag.current = { y: e.clientY, dy: 0, t: e.timeStamp, v: 0 };
     e.currentTarget.setPointerCapture?.(e.pointerId);
     if (ref.current) ref.current.style.transition = "none";
   };
   const onHandleMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d || !ref.current) return;
-    d.dy = Math.max(0, e.clientY - d.y);
-    ref.current.style.transform = d.dy ? `translateY(${d.dy}px)` : "";
+    const dy = e.clientY - d.y;
+    const dt = e.timeStamp - d.t;
+    if (dt > 0) d.v = 0.8 * ((dy - d.dy) / dt) + 0.2 * d.v;
+    d.dy = dy;
+    d.t = e.timeStamp;
+    const shown = dy >= 0 ? dy : -rubberBand(-dy, SHEET_OVERSCROLL);
+    ref.current.style.transform = shown ? `translateY(${shown}px)` : "";
   };
   const onHandleUp = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     drag.current = null;
-    if (!d || !ref.current) return;
-    ref.current.style.transition = "";
-    if (shouldDismissSheet(d.dy, e.timeStamp - d.t)) { onClose(); return; }
-    ref.current.style.transform = "";
+    const el = ref.current;
+    if (!d || !el) return;
+    const v = e.timeStamp - d.t > THROW_STALE_MS ? 0 : d.v;
+    if (shouldDismissSheet(d.dy, v)) {
+      // Carry the throw: the rest of the way at the speed the finger left with, within the exit.
+      const rest = Math.max(0, el.offsetHeight - d.dy);
+      const ms = Math.round(Math.min(EXIT_MS.sheet, Math.max(80, rest / Math.max(v, 0.5))));
+      el.dataset.thrown = "";
+      el.style.transition = `transform ${ms}ms var(--ease-out)`;
+      el.style.transform = "translateY(100%)";
+      onClose();
+      return;
+    }
+    // Short of dismissing: back home on the sheet's spring (.sheet transition).
+    el.style.transition = "";
+    el.style.transform = "";
   };
 
-  if (!open) return null;
+  if (!mounted) return null;
+  const out = leaving ? " is-leaving" : "";
 
   if (asSheet) {
     return createPortal(
-      <div className="sheet-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className={`sheet-scrim${out}`} {...leavingAttrs(leaving)} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
         <div ref={ref} id={id} role="dialog" aria-modal="true" aria-label={label} className={`sheet float float-strong ${className}`} tabIndex={-1}>
           <div className="sheet-grip" aria-hidden="true" onPointerDown={onHandleDown} onPointerMove={onHandleMove} onPointerUp={onHandleUp} onPointerCancel={onHandleUp}><div className="sheet-handle" /></div>
-          {children}
+          {content}
         </div>
       </div>,
       document.body,
@@ -122,12 +161,12 @@ export function Layer({ open, onClose, anchorRef, label, variant = "auto", place
     top: pos?.top, left: pos?.left, width: w, visibility: pos ? "visible" : "hidden", "--origin": pos?.origin ?? "top right",
   };
   const node = (
-    <div ref={ref} id={id} role="dialog" aria-modal={modal || undefined} aria-label={label} className={`layer float float-strong ${className}`} style={style} tabIndex={-1}>
-      {children}
+    <div ref={ref} id={id} role="dialog" aria-modal={modal || undefined} aria-label={label} className={`layer float float-strong ${className}${out}`} style={style} tabIndex={-1} {...(modal ? {} : leavingAttrs(leaving))}>
+      {content}
     </div>
   );
   return createPortal(
-    modal ? <div className="layer-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>{node}</div> : node,
+    modal ? <div className={`layer-scrim${out}`} {...leavingAttrs(leaving)} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>{node}</div> : node,
     document.body,
   );
 }
