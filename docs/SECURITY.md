@@ -21,7 +21,10 @@ Report a vulnerability privately to Group IT, never in a public issue.
   whole security. An integration test pins the exact list a browser role can execute
   (`TestDefinerFunctionsAreGrantedDeliberately`): anonymous callers reach two
   (`needs_bootstrap`, `bootstrap_domains`); the functions behind the workers are the service
-  role's alone. Before v6.4 two of them (`notify_insert`, `emit_sla_notifications`) were
+  role's alone. The read helpers that bypass row-level security to use an index (searches,
+  the case order stamps, the shared dashboard and approval statistics) return only ids or
+  aggregates the caller could read anyway: they apply the caller's visibility, or answer only
+  roles that see every case. `case_stamps` itself has no grants. Before v6.4 two of them (`notify_insert`, `emit_sla_notifications`) were
   executable with the public anon key.
 
 ## Identity

@@ -76,7 +76,7 @@ func main() {
 			sender = webpush.NewSender(v, cfg.PushHosts)
 		}
 		w := workers.New(pool, sender, logger, workers.Config{
-			PushInterval: cfg.PushInterval, SLAInterval: cfg.SLAInterval, DashboardInterval: cfg.DashboardInterval,
+			PushInterval: cfg.PushInterval, SLAInterval: cfg.SLAInterval, DashboardInterval: cfg.DashboardInterval, RestampInterval: cfg.RestampInterval,
 			PruneInterval: cfg.PruneInterval, RetentionDays: cfg.NotificationRetentionDays,
 		})
 		go func() { w.Run(ctx); close(workersDone) }()

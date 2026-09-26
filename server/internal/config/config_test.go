@@ -136,7 +136,7 @@ func TestWorkerDefaultsAndPushOffWithoutKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !c.Workers || c.PushInterval != 10*time.Second || c.SLAInterval != 15*time.Minute || c.DashboardInterval != time.Minute ||
-		c.PruneInterval != 6*time.Hour || c.NotificationRetentionDays != 90 || c.VAPIDPublicKey != "" || len(c.PushHosts) != 0 {
+		c.RestampInterval != 10*time.Second || c.PruneInterval != 6*time.Hour || c.NotificationRetentionDays != 90 || c.VAPIDPublicKey != "" || len(c.PushHosts) != 0 {
 		t.Fatalf("worker defaults: %+v", c)
 	}
 	c, err = FromEnv(baseEnv(map[string]string{"WORKERS": "false", "SLA_REMINDER_INTERVAL": "0", "PUSH_ENDPOINT_HOSTS": "fcm.googleapis.com, Push.Apple.com"}))
@@ -175,6 +175,7 @@ func TestVAPIDIsAllOrNothingAndChecked(t *testing.T) {
 	for _, bad := range []map[string]string{
 		{"NOTIFICATION_RETENTION_DAYS": "3"},
 		{"PUSH_INTERVAL": "10ms"},
+		{"RESTAMP_INTERVAL": "500ms"},
 		{"PUSH_ENDPOINT_HOSTS": "https://fcm.googleapis.com"},
 		{"PUSH_ENDPOINT_HOSTS": "localhost"},
 	} {

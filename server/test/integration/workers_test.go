@@ -618,9 +618,12 @@ func TestDashboardRefreshWarmsTheSharedAnswer(t *testing.T) {
 // what authenticated may.
 func TestDefinerFunctionsAreGrantedDeliberately(t *testing.T) {
 	wantAnon := []string{"bootstrap_domains", "needs_bootstrap"}
-	wantAuth := []string{"app_can", "bootstrap_domains", "can_manage_account", "case_in_scope", "case_search_ids", "current_app_role",
-		"current_app_user_id", "current_case_scope", "dashboard_shared", "is_group_it_email", "needs_bootstrap", "next_case_ref",
-		"prune_notifications", "save_push_subscription", "user_search_ids"}
+	// case_stamp_ids, case_stale_ids and gate_stats_shared answer only callers who see every case
+	// (TestStampReadsAnswerOnlyCallersWhoSeeEveryCase); case_search_page_ids applies the caller's
+	// visibility as case_search_ids does (TestSearchPageTakesEitherRoute).
+	wantAuth := []string{"app_can", "bootstrap_domains", "can_manage_account", "case_in_scope", "case_search_ids", "case_search_page_ids", "case_stale_ids",
+		"case_stamp_ids", "current_app_role", "current_app_user_id", "current_case_scope", "dashboard_shared", "gate_stats_shared",
+		"is_group_it_email", "needs_bootstrap", "next_case_ref", "prune_notifications", "save_push_subscription", "user_search_ids"}
 	for role, want := range map[string][]string{"anon": wantAnon, "authenticated": wantAuth} {
 		var got []string
 		system(t, func(ctx context.Context, ex db.Executor) error {

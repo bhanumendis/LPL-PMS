@@ -75,7 +75,10 @@ type Config struct {
 	PushInterval      time.Duration
 	SLAInterval       time.Duration
 	DashboardInterval time.Duration
-	PruneInterval     time.Duration
+	// RestampInterval: how soon a case order stamp is retaken after its window closes (the
+	// date-only deadlines of every case turn together at 00:00 UTC).
+	RestampInterval time.Duration
+	PruneInterval   time.Duration
 	// NotificationRetentionDays is how long notifications are kept (default 90, at least 7).
 	NotificationRetentionDays int
 	// VAPID key pair and contact for Web Push (all three, or none: push delivery off).
@@ -204,12 +207,13 @@ func FromEnv(get func(string) string) (Config, error) {
 	c.PushInterval = durv("PUSH_INTERVAL", 10*time.Second)
 	c.SLAInterval = durv("SLA_REMINDER_INTERVAL", 15*time.Minute)
 	c.DashboardInterval = durv("DASHBOARD_REFRESH_INTERVAL", time.Minute)
+	c.RestampInterval = durv("RESTAMP_INTERVAL", 10*time.Second)
 	c.PruneInterval = durv("PRUNE_INTERVAL", 6*time.Hour)
 	c.NotificationRetentionDays = int(intv("NOTIFICATION_RETENTION_DAYS", 90))
 	if c.NotificationRetentionDays < 7 {
 		errs = append(errs, fmt.Errorf("NOTIFICATION_RETENTION_DAYS must be at least 7, got %d", c.NotificationRetentionDays))
 	}
-	for name, d := range map[string]time.Duration{"PUSH_INTERVAL": c.PushInterval, "SLA_REMINDER_INTERVAL": c.SLAInterval, "DASHBOARD_REFRESH_INTERVAL": c.DashboardInterval, "PRUNE_INTERVAL": c.PruneInterval} {
+	for name, d := range map[string]time.Duration{"PUSH_INTERVAL": c.PushInterval, "SLA_REMINDER_INTERVAL": c.SLAInterval, "DASHBOARD_REFRESH_INTERVAL": c.DashboardInterval, "RESTAMP_INTERVAL": c.RestampInterval, "PRUNE_INTERVAL": c.PruneInterval} {
 		if d > 0 && d < time.Second {
 			errs = append(errs, fmt.Errorf("%s must be 0 (off) or at least 1s, got %s", name, d))
 		}

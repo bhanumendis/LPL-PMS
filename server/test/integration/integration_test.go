@@ -158,7 +158,7 @@ func reset(t *testing.T) {
 	t.Helper()
 	system(t, func(ctx context.Context, ex db.Executor) error {
 		for _, stmt := range []string{
-			"truncate public.case_transfers, public.case_gates, public.dashboard_cache, public.cases, public.audit, public.prompts, public.org_config, public.app_users, public.notifications, public.push_subscriptions",
+			"truncate public.case_stamps, public.case_transfers, public.case_gates, public.dashboard_cache, public.cases, public.audit, public.prompts, public.org_config, public.app_users, public.notifications, public.push_subscriptions",
 			"delete from auth.users",
 			"select setval('public.case_ref_seq', 1, false)",
 			// A fresh database carries the organisation row (v6 write path).

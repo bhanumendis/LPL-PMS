@@ -387,38 +387,37 @@ func TestCaseFiltersAgreeWithTypeScript(t *testing.T) {
 		}},
 	}
 	for _, cfg := range []string{"standard", "tight"} {
-		c := w.fx.Configs[cfg]
-		system(t, func(ctx context.Context, ex db.Executor) error {
-			_, err := ex.Exec(ctx, "update public.org_config set config = $1::jsonb where id = 'org'", string(c))
-			return err
-		})
-		for _, f := range filters {
-			p := map[string]any{"now": w.fx.Now}
-			for k, v := range f.p {
-				p[k] = v
-			}
-			want := map[string]bool{}
-			for id, s := range w.fx.Summaries {
-				if f.want(s, w.fx.States[cfg][id]) {
-					want[id] = true
+		for _, mode := range stampModes {
+			useConfig(t, w.fx.Configs[cfg])
+			mode.prepare(t, w.fx.Now)
+			for _, f := range filters {
+				p := map[string]any{"now": w.fx.Now}
+				for k, v := range f.p {
+					p[k] = v
 				}
-			}
-			label := fmt.Sprintf("%s %v", cfg, f.p)
-			if len(want) == 0 && !emptyByDesign[f.p["q"]] {
-				t.Errorf("%s: the fixture has no case for this filter, so it proves nothing", label)
-			}
-			for _, srt := range []string{"updated", "severity"} {
-				p["sort"] = srt
-				rows := allPages(t, "cases_page", w.super.Token, p, 41, caseID)
-				sameSets(t, label+" sort "+srt, want, idSet(rows))
-			}
-			delete(p, "sort")
-			p["cap"] = 100000
-			b, _ := json.Marshal(map[string]any{"p": p})
-			r := rpc(t, "cases_count", w.super.Token, string(b))
-			expect(t, r, http.StatusOK, "")
-			if r.Body != fmt.Sprint(len(want)) {
-				t.Errorf("%s: cases_count %s, want %d", label, r.Body, len(want))
+				want := map[string]bool{}
+				for id, s := range w.fx.Summaries {
+					if f.want(s, w.fx.States[cfg][id]) {
+						want[id] = true
+					}
+				}
+				label := fmt.Sprintf("%s, %s %v", mode.name, cfg, f.p)
+				if len(want) == 0 && !emptyByDesign[f.p["q"]] {
+					t.Errorf("%s: the fixture has no case for this filter, so it proves nothing", label)
+				}
+				for _, srt := range []string{"updated", "severity"} {
+					p["sort"] = srt
+					rows := allPages(t, "cases_page", w.super.Token, p, 41, caseID)
+					sameSets(t, label+" sort "+srt, want, idSet(rows))
+				}
+				delete(p, "sort")
+				p["cap"] = 100000
+				b, _ := json.Marshal(map[string]any{"p": p})
+				r := rpc(t, "cases_count", w.super.Token, string(b))
+				expect(t, r, http.StatusOK, "")
+				if r.Body != fmt.Sprint(len(want)) {
+					t.Errorf("%s: cases_count %s, want %d", label, r.Body, len(want))
+				}
 			}
 		}
 	}
@@ -748,34 +747,34 @@ func TestCasesPageMatchesTheReferenceOrder(t *testing.T) {
 	if len(w.fx.Queries) == 0 {
 		t.Fatal("the fixture carries no queries; run npm run parity:update")
 	}
-	current := ""
-	for _, q := range w.fx.Queries {
-		if q.Config != current {
-			c := w.fx.Configs[q.Config]
-			system(t, func(ctx context.Context, ex db.Executor) error {
-				_, err := ex.Exec(ctx, "update public.org_config set config = $1::jsonb where id = 'org'", string(c))
-				return err
-			})
-			current = q.Config
-		}
-		p := map[string]any{"now": w.fx.Now}
-		for k, v := range q.P {
-			p[k] = v
-		}
-		rows := allPages(t, "cases_page", w.super.Token, p, 37, caseID)
-		got := make([]string, len(rows))
-		for i, r := range rows {
-			got[i] = caseID(r)
-		}
-		if strings.Join(got, ",") != strings.Join(q.IDs, ",") {
-			first := -1
-			for i := range got {
-				if i >= len(q.IDs) || got[i] != q.IDs[i] {
-					first = i
-					break
-				}
+	// Both ways the severity, urgency and retention orders can be answered (stamps_test.go).
+	for _, mode := range stampModes {
+		current := ""
+		for _, q := range w.fx.Queries {
+			if q.Config != current {
+				useConfig(t, w.fx.Configs[q.Config])
+				mode.prepare(t, w.fx.Now)
+				current = q.Config
 			}
-			t.Errorf("%s %v: %d rows, reference %d; first difference at %d", q.Config, q.P, len(got), len(q.IDs), first)
+			p := map[string]any{"now": w.fx.Now}
+			for k, v := range q.P {
+				p[k] = v
+			}
+			rows := allPages(t, "cases_page", w.super.Token, p, 37, caseID)
+			got := make([]string, len(rows))
+			for i, r := range rows {
+				got[i] = caseID(r)
+			}
+			if strings.Join(got, ",") != strings.Join(q.IDs, ",") {
+				first := -1
+				for i := range got {
+					if i >= len(q.IDs) || got[i] != q.IDs[i] {
+						first = i
+						break
+					}
+				}
+				t.Errorf("%s, %s %v: %d rows, reference %d; first difference at %d", mode.name, q.Config, q.P, len(got), len(q.IDs), first)
+			}
 		}
 	}
 }

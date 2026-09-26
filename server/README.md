@@ -10,7 +10,7 @@ speaks (`src/lib/server.ts`) in place of Supabase's request path:
 | `/rest/v1/{table}`, `/rest/v1/rpc/{fn}` | The PostgREST subset the frontend uses, executed under the caller's Postgres role and JWT claims so row-level security and the guard triggers in `supabase/schema.sql` keep deciding everything | PostgREST |
 | `/auth/v1/*` | Reverse proxy to GoTrue, unchanged | nothing (GoTrue stays) |
 | `/functions/v1/admin-users` | The account-administration function, same contract, status codes and messages | the `admin-users` Edge Function |
-| background workers | Web Push delivery, service-level reminders, the shared dashboard, notification retention (`internal/workers`) | the `push-dispatch` Edge Function and pg_cron |
+| background workers | Web Push delivery, service-level reminders, the shared dashboard, the case order stamps, notification retention (`internal/workers`) | the `push-dispatch` Edge Function and pg_cron |
 
 The Edge Functions' source was removed from the repository in v6 (it is in the git history
 before that commit); nothing calls them once the browser talks to lpl-api.
@@ -36,7 +36,8 @@ internal/httpapi   router, middleware, handlers, PostgREST/GoTrue-shaped errors
 internal/gotrue    GoTrue admin API client
 internal/parity    golden record format and normaliser
 internal/webpush   Web Push: RFC 8291 encryption, RFC 8292 VAPID, the push-service request
-internal/workers   background jobs: push delivery, reminders, dashboard refresh, pruning
+internal/workers   background jobs: push delivery, reminders, dashboard refresh, case order stamps, pruning
+internal/schema    the newest migration this build needs (GET /readyz refuses a database without it)
 test/sql           auth shim so schema.sql runs on a plain Postgres (tests only)
 test/integration   RLS, guard, attribution, paging, admin-users and worker tests against a real Postgres
 test/contract      golden replay harness
@@ -98,7 +99,8 @@ so two replicas never deliver a notification twice.
 |---|---|---|
 | push | `PUSH_INTERVAL` (10 s) | Claims undelivered notifications with a lease (`push_claim`, `FOR UPDATE SKIP LOCKED`), encrypts each for every active device of an active recipient and posts it to the push service; settles the outcome (`push_settle`). Transient failures back off (30 s, 2 min, 8 min, 32 min) and give up after five attempts; 404/410 revoke the subscription. A notification older than a day is not sent. Off without VAPID keys. |
 | reminders | `SLA_REMINDER_INTERVAL` (15 min) | `emit_sla_notifications()`: a reminder for every clock that is due soon or breached, once per clock, state and due date. One replica at a time (advisory lock). |
-| dashboard | `DASHBOARD_REFRESH_INTERVAL` (1 min) | `dashboard_refresh()`: recomputes the shared all-cases dashboard when cases or configuration changed or it is four minutes old, so no reader waits for it. |
+| dashboard | `DASHBOARD_REFRESH_INTERVAL` (1 min) | `dashboard_refresh()`: recomputes the shared all-cases dashboard and the shared approval statistics when cases or configuration changed or they are four minutes old, so no reader waits for them. |
+| case order stamps | `RESTAMP_INTERVAL` (10 s) | `case_restamp_due()`: retakes the stamps behind the severity, urgency and retention orders once their window has closed (most close together at 00:00 UTC, when every date-only deadline turns: about 6 s per 100,000 cases) and all of them after the service levels change, in batches of 20,000 within 30 s a tick. One replica at a time (advisory lock). A page evaluates any stale case live meanwhile; beyond 5,000 stale cases it evaluates every case, as before stamps. |
 | retention | `PRUNE_INTERVAL` (6 h) | Deletes notifications older than `NOTIFICATION_RETENTION_DAYS` (90) in batches of 5,000, and subscriptions revoked more than 30 days ago. |
 
 The push dispatcher posts only to https endpoints on the push-service allow-list

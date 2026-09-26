@@ -3,9 +3,10 @@
 //
 // Package workers is lpl-api's background work, which Supabase Edge Functions and pg_cron did
 // before v6: delivering notifications to browsers, service-level reminders, keeping the
-// shared dashboard warm and pruning old notifications. Every job is safe to run on any number
-// of replicas at once: push delivery leases rows (public.push_claim), reminders are
-// deduplicated by key and single-flighted by an advisory lock, and the rest are idempotent.
+// shared dashboard warm, keeping the case order stamps current and pruning old notifications.
+// Every job is safe to run on any number of replicas at once: push delivery leases rows
+// (public.push_claim), reminders are deduplicated by key and single-flighted by an advisory
+// lock, as is the restamp, and the rest are idempotent.
 package workers
 
 import (
@@ -29,6 +30,7 @@ type Config struct {
 	PushInterval      time.Duration
 	SLAInterval       time.Duration
 	DashboardInterval time.Duration
+	RestampInterval   time.Duration
 	PruneInterval     time.Duration
 	// RetentionDays is how long notifications are kept (at least 7).
 	RetentionDays int
@@ -47,6 +49,10 @@ const (
 	pruneBatch   = 5000
 	keyCheckGap  = 10 * time.Minute
 	settleBudget = 15 * time.Second
+	// A restamp statement retakes at most this many stamps; a tick keeps going (a change of
+	// service levels makes every stamp stale) until none are left or its budget is spent.
+	restampBatch  = 20000
+	restampBudget = 30 * time.Second
 )
 
 // Workers runs the jobs.
@@ -80,6 +86,9 @@ func (w *Workers) Run(ctx context.Context) {
 		{"push", w.cfg.PushInterval, w.PushOnce},
 		{"sla_reminders", w.cfg.SLAInterval, w.SLAOnce},
 		{"dashboard_refresh", w.cfg.DashboardInterval, w.DashboardOnce},
+		// Stamps close at whole-day turns of clocks and dates, most of them together at 00:00
+		// UTC; a page evaluates any stale case live meanwhile, so the sooner the better.
+		{"case_restamp", w.cfg.RestampInterval, w.RestampOnce},
 		{"prune_notifications", w.cfg.PruneInterval, w.PruneOnce},
 	}
 	if w.sender == nil && w.cfg.PushInterval > 0 {
@@ -154,6 +163,24 @@ func (w *Workers) SLAOnce(ctx context.Context) (int, error) {
 		return ex.QueryRow(ctx, "select public.emit_sla_notifications()").Scan(&n)
 	})
 	return n, err
+}
+
+// RestampOnce retakes the case order stamps that are no longer valid
+// (public.case_restamp_due): those whose window has closed and, after the service levels
+// change, all of them. Returns how many it retook; 0 while another replica holds the lock.
+func (w *Workers) RestampOnce(ctx context.Context) (int, error) {
+	total := 0
+	deadline := time.Now().Add(restampBudget)
+	for {
+		var n int
+		err := w.db.WithSystem(ctx, func(ctx context.Context, ex db.Executor) error {
+			return ex.QueryRow(ctx, "select public.case_restamp_due($1)", restampBatch).Scan(&n)
+		})
+		total += n
+		if err != nil || n < restampBatch || ctx.Err() != nil || time.Now().After(deadline) {
+			return total, err
+		}
+	}
 }
 
 // DashboardOnce recomputes the shared dashboard when it is stale. Returns 1 when it did.

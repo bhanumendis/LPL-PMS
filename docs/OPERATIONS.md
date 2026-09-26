@@ -10,7 +10,7 @@ How the system is built, released, rolled back and run. The pipeline lives in
 | Part | What it is | Where |
 |---|---|---|
 | Web application | One HTML file plus `sw.js` (Web Push), built for exactly one API origin; its Content-Security-Policy admits nothing else | GitHub Pages (`deploy-web`), or any static host serving `dist/` |
-| lpl-api | Go service (`server/`): the data API under row-level security, the GoTrue proxy, account administration, and the background workers (push, reminders, dashboard, retention) | Container `ghcr.io/<owner>/lpl-api`, any container host |
+| lpl-api | Go service (`server/`): the data API under row-level security, the GoTrue proxy, account administration, and the background workers (push, reminders, dashboard, case order stamps, retention) | Container `ghcr.io/<owner>/lpl-api`, any container host |
 | Database and identity | Postgres (`supabase/schema.sql`) and GoTrue | Supabase project (Singapore region) |
 
 ## One-time setup (repository administrator)
@@ -120,9 +120,10 @@ in its own transaction; the first failure stops the run and leaves the database 
 completed version. Migrate **before** merging a release that depends on the new schema.
 
 The v6 release (from v5): migrate (v6 write path, RBAC, case index with its backfill, workers,
-attribution), then deploy lpl-api, then the web application, then retire the Edge Functions
-and cron jobs in the order `server/docs/CUTOVER.md` gives. The case index migration re-derives
-every case's summary once; on a large project run it in a quiet hour.
+attribution, case order stamps with their backfill: about 45 s per million cases), then deploy
+lpl-api, then the web application, then retire the Edge Functions and cron jobs in the order
+`server/docs/CUTOVER.md` gives. The case index migration re-derives every case's summary once;
+on a large project run it in a quiet hour.
 
 ## Running it
 
@@ -134,9 +135,13 @@ every case's summary once; on a large project run it in a quiet hour.
   a warning when the VAPID key in Settings differs from the server's.
 - **Alert on:** `/readyz` failing; any `worker failed`; a sustained 5xx rate; `push not
   delivered` with status 401/403 (a VAPID key problem, every push is failing).
-- **Scale-out:** run as many lpl-api replicas as needed; push delivery leases rows, reminders
-  and retention take advisory locks, and the dashboard refresh is single-flighted, so replicas
-  never duplicate work. `WORKERS=false` makes a replica serve requests only.
+- **Scale-out:** run as many lpl-api replicas as needed; push delivery leases rows, reminders,
+  restamping and retention take advisory locks, and the dashboard refresh is single-flighted,
+  so replicas never duplicate work. `WORKERS=false` makes a replica serve requests only; keep
+  at least one replica with workers on, or the severity, urgency and retention lists fall back
+  to evaluating every case once more than 5,000 stamps are stale (correct, but seconds at a
+  million cases). At 00:00 UTC every date-only deadline turns at once; the worker retakes
+  about 100,000 stamps in 6 s.
 - **Rate limits** are per client IP and per replica (`RATE_LIMIT_*`); set `TRUSTED_PROXY_HOPS`
   to the number of proxies in front, or every client shares the proxy's budget.
 
