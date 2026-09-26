@@ -1,7 +1,6 @@
 # Desktop responsiveness audit — 16 September 2026
 
-Copyright (c) 2026 Bhanu Mendis. All rights reserved.  
-Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+Developed by Bhanu Mendis - Group IT
 
 Raised as: the application "looks like a website that was made for a phone but is in a laptop".
 A multi-agent audit swept the shell, the four role dashboards, the dense tables and registers, the
@@ -52,7 +51,32 @@ Measured content width against viewport, before and after:
 Supporting change: `--page-max`, `--page-gutter` and `--rail-w` were added to `src/styles/tokens.css`
 so the page and the utility bar above it resolve against one shared measure.
 
-## Outstanding
+## Closed on 25 September 2026
+
+Every outstanding finding below was closed in the v6 release pass, verified by the browser
+suite (`scripts/e2e-ui.sh`: the production bundle against lpl-api over 400 generated cases,
+every role at 1440×900, 1280×800, 1024×768, 768×1024, 390×844, 375×812 and 360×800, plus dark
+at 1440; axe WCAG 2.2 A/AA with colour contrast, no sideways scroll, no console errors, a
+screenshot of every page). Differences from the recorded fixes:
+
+- **Cases table:** the `page-wide` class is not needed (`--page-max` is already 1720px). The
+  table was the problem at 1440 — its natural width pushed Attention and Updated out of the
+  panel — so the column floors went, attention chips wrap, and Updated shows date over time.
+  All nine columns are visible from 1280px.
+- **Staff:** the row actions carry short labels with full accessible names ("Password",
+  named "Set a temporary password for …"), and the role donut sits beside the table only from
+  1600px, below it otherwise, so all eight columns and every action fit at 1280.
+- **Stat tiles:** the two duplicate findings were applied once, at 1280px.
+- **Student hero:** the two duplicate findings were applied once (the second, `.hero-txt`
+  grid, form).
+
+Found and fixed during the same pass: the hero's 640px stacking rule sat above the 1023px rule
+and never applied (phones showed the ring beside a column of three words); page headers
+squeezed their title beside the actions on phones; the product name slid under the dock at
+1440; empty programme/destination fields left "· —" in case and student headers; the cases
+filter bar stacked into a full screen of controls on phones.
+
+## Outstanding (as recorded on 16 September; closed above)
 
 Deferred at the request of the user on 16 September 2026, to be picked up in a later session. Each
 entry below carries the verifier's corrected fix, so none of this needs auditing again.

@@ -1,6 +1,6 @@
 # LPL PMS v5 — UI/UX reimagination: audit, blueprint and gate
 
-Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved.
+Lyceum Placements — Placement Management System. Developed by Bhanu Mendis - Group IT
 Prepared 12 September 2026 for the Phase 3 hard gate. Nothing in production code has been changed.
 
 ---

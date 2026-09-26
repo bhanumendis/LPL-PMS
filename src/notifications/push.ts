@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Browser push: feature detection, the service worker, and this device's subscription.
  * The permission prompt is only ever raised from subscribeThisDevice(), which the user

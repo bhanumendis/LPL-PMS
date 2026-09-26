@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 // Golden replay: re-issues traffic recorded from a Supabase project (cmd/lpl-record)
 // against lpl-api on a fresh database and diffs the answers.
 //
@@ -87,7 +86,7 @@ func TestReplayGolden(t *testing.T) {
 	exec("select setval('public.case_ref_seq', 1, false)")
 
 	srv, err := httpapi.New(httpapi.Deps{
-		Config:   config.Config{AnonKey: "anon-key", ServiceRoleKey: "service-key", GoTrueURL: "http://gotrue.invalid", MaxBodyBytes: 16 << 20, RequestTimeout: 30 * time.Second, CORSAllowOrigin: "*"},
+		Config:   config.Config{AnonKey: "anon-key", ServiceRoleKey: "service-key", GoTrueURL: "http://gotrue.invalid", MaxBodyBytes: 16 << 20, RequestTimeout: 30 * time.Second, CORSAllowOrigins: []string{"*"}},
 		Runner:   pool,
 		Resolver: auth.NewVerifier("anon-key", secret, "", 0),
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),

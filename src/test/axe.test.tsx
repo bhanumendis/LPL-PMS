@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Automated WCAG 2.1 A/AA checks with axe-core over the rendered shell and the main screens
  * for every role, in both themes. Colour contrast is excluded here because jsdom does not
@@ -51,6 +50,10 @@ const SCREENS: { role: Role; hash: string; ready: () => Promise<unknown> }[] = [
   { role: "admin", hash: "#/cases", ready: () => screen.findByRole("search", { name: "Filter cases" }, { timeout: 5000 }) },
   { role: "admin", hash: "#/audit", ready: () => screen.findByText("Opened case LPL-2026-0001", {}, { timeout: 5000 }) },
   { role: "admin", hash: "#/case/c1", ready: () => screen.findByRole("tablist", { name: "Case sections" }, { timeout: 5000 }) },
+  { role: "super_admin", hash: "#/roles/admin", ready: () => screen.findByRole("tablist", { name: "Roles" }, { timeout: 5000 }) },
+  { role: "super_admin", hash: "#/settings", ready: () => screen.findByRole("heading", { level: 2, name: "System configuration" }, { timeout: 5000 }) },
+  { role: "admin", hash: "#/roles/counsellor", ready: () => screen.findByRole("tablist", { name: "Roles" }, { timeout: 5000 }) },
+  { role: "admin", hash: "#/staff", ready: () => screen.findByRole("navigation", { name: "People sections" }, { timeout: 5000 }) },
   { role: "team_leader", hash: "#/", ready: () => screen.findByRole("group", { name: "Team position" }, { timeout: 5000 }) },
   { role: "team_leader", hash: "#/approvals", ready: () => screen.findByRole("group", { name: "Approval position" }, { timeout: 5000 }) },
   { role: "counsellor", hash: "#/", ready: () => screen.findByRole("group", { name: "Your position" }, { timeout: 5000 }) },

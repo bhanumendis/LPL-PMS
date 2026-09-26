@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Slice subscriptions to the store. A component that reads one slice re-renders only when
  * that slice changes, not on every poll tick.

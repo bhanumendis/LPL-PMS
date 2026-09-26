@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 //
 // SQL builders. Two rules keep the database's behaviour identical to what it does under
 // PostgREST:
@@ -79,7 +78,12 @@ func buildSelect(q contract.Query) (string, []any, *contract.Error) {
 	if err != nil {
 		return "", nil, err
 	}
-	inner := "select * from " + qualify(q.Table) + where
+	// The contract's columns, never "*": columns the database keeps for itself stay inside it.
+	cols := make([]string, len(q.Table.Columns))
+	for i, c := range q.Table.Columns {
+		cols[i] = ident(c.Name)
+	}
+	inner := "select " + strings.Join(cols, ", ") + " from " + qualify(q.Table) + where
 	if len(q.Order) > 0 {
 		terms := make([]string, 0, len(q.Order))
 		for _, o := range q.Order {

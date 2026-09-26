@@ -1,33 +1,29 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Performance: funnel, volume over time, service levels, mix. Below the fold, collapsible,
- * remembered per browser. Gated by analytics.read exactly as the v4 overview was.
+ * remembered per browser. Gated by analytics.read exactly as the v4 overview was. Every figure
+ * comes from the dashboard aggregate (the database computes it; nothing is counted here).
  */
 import { useMemo, useState } from "react";
 import { ChevronDown, Download } from "lucide-react";
 import { useLocalPref } from "@/lib/hooks";
-import { averageLeadTime, caseChannel, caseDestination, countBy, docStats, funnel, monthlyVolume, slaCompliance } from "@/lib/logic";
+import { monthLabel } from "@/lib/logic";
 import { AreaChart, DonutWithLegend, Funnel, HBars, Ring } from "@/lib/charts";
 import { EmptyState, Notice } from "@/lib/ui";
-import type { CaseRecord, OrgConfig } from "@/lib/types";
+import type { DashboardSummary } from "@/lib/summary";
 
 const RANGES = [{ id: "6", label: "6 mo" }, { id: "12", label: "12 mo" }, { id: "24", label: "24 mo" }];
 
-export function PerformanceSection({ cases, config, canRead, canDownload, onExport, scope, prefKey = "lpl:pms:perf" }: { cases: CaseRecord[]; config: OrgConfig; canRead: boolean; canDownload?: boolean; onExport?: () => void; scope: "team" | "mine"; prefKey?: string }) {
+export function PerformanceSection({ dashboard: d, canRead, canDownload, onExport, scope, prefKey = "lpl:pms:perf" }: { dashboard: DashboardSummary; canRead: boolean; canDownload?: boolean; onExport?: () => void; scope: "team" | "mine"; prefKey?: string }) {
   const [open, setOpen] = useLocalPref(prefKey, scope === "team");
   const [range, setRange] = useState("12");
-  const all = cases;
-  const live = useMemo(() => all.filter((c) => c.status !== "exited"), [all]);
-  const vol = useMemo(() => monthlyVolume(all, Number(range)), [all, range]);
-  const sla = useMemo(() => slaCompliance(all, config), [all, config]);
-  const dest = useMemo(() => countBy(live, caseDestination).slice(0, 8), [live]);
-  const channels = useMemo(() => countBy(all, caseChannel), [all]);
-  const exits = useMemo(() => countBy(all.filter((c) => c.status === "exited"), (c) => c.exit?.code ?? "Other"), [all]);
-  const docs = useMemo(() => docStats(all), [all]);
-  const lead = useMemo(() => averageLeadTime(all), [all]);
+  const vol = useMemo(() => {
+    const tail = d.volume.slice(-Number(range));
+    return { labels: tail.map((v) => monthLabel(v.month)), enquiries: tail.map((v) => v.enquiries), arrivals: tail.map((v) => v.arrivals) };
+  }, [d.volume, range]);
+  const sla = d.sla, dest = d.destinations, channels = d.channels, exits = d.exits, docs = d.docs, lead = d.leadDays;
 
   return (
     <section className="perf surface" aria-labelledby="perf-h">
@@ -44,14 +40,14 @@ export function PerformanceSection({ cases, config, canRead, canDownload, onExpo
         <div id="perf-body" className="perf-body">
           {!canRead ? (
             <Notice tone="neutral">Your role sees the overview tiles. The analytics.read permission opens the funnel, charts and caseload table.</Notice>
-          ) : all.length === 0 ? (
+          ) : d.total === 0 ? (
             <EmptyState glyph="chart" title="Not enough history yet" reason="Charts fill as cases move through the nine stages." />
           ) : (
             <>
               <div className="perf-grid">
                 <div className="perf-cell">
                   <h3>Enquiry to arrival</h3>
-                  <Funnel rows={funnel(all)} />
+                  <Funnel rows={d.funnel} />
                   <p className="xs muted mt2">Conversion families per §11 of the process document. Drop percentages are stage to stage.</p>
                 </div>
                 <div className="perf-cell span2">

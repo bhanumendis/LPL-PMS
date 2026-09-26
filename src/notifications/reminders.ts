@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Reminders come from the three service-level clocks and returned gates on the caller's own
  * open cases. They are computed live, never stored, and disappear once resolved.

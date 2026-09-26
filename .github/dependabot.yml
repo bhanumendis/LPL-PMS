@@ -1,0 +1,22 @@
+# Lyceum Placements — Placement Management System
+# Copyright © Bhanu Mendis - LGH IT
+#
+# Weekly dependency updates; each arrives as a pull request that must pass CI.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      dev-tooling:
+        dependency-type: development
+  - package-ecosystem: gomod
+    directory: /server
+    schedule: { interval: weekly }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /server
+    schedule: { interval: weekly }

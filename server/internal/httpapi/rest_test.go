@@ -1,12 +1,13 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 package httpapi
 
 import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"lpl-api/internal/schema"
 )
 
 func TestSelectRowsHappy(t *testing.T) {
@@ -267,21 +268,39 @@ func TestPreflightNeedsNoApikey(t *testing.T) {
 	}
 }
 
+func TestVersionNamesTheBuildWithoutAKey(t *testing.T) {
+	rec := newEnv(t, func(d *Deps) { d.Revision = "abc123" }).do(http.MethodGet, "/version", "", "", map[string]string{"apikey": ""})
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"revision":"abc123","schema":"`+schema.Required+`"}` {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	rec = newEnv(t).do(http.MethodGet, "/version", "", "", map[string]string{"apikey": ""})
+	if !strings.Contains(rec.Body.String(), `"dev"`) {
+		t.Fatalf("unset revision: %s", rec.Body.String())
+	}
+}
+
 func TestHealthAndReadiness(t *testing.T) {
 	e := newEnv(t)
 	rec := e.do(http.MethodGet, "/healthz", "", "", map[string]string{"apikey": ""})
 	if rec.Code != 200 || rec.Body.String() != "ok" {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
-	e.ex.rows = []fakeRow{{vals: []any{1}}}
+	e.ex.rows = []fakeRow{{vals: []any{true}}}
 	rec = e.do(http.MethodGet, "/readyz", "", "", map[string]string{"apikey": ""})
-	if rec.Code != 200 {
+	if rec.Code != 200 || rec.Body.String() != "ready" {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	// A database without this build's newest migration is not ready: the deploy smoke test
+	// fails on it and the pipeline rolls the API back.
+	e.ex.rows = []fakeRow{{vals: []any{false}}}
+	rec = e.do(http.MethodGet, "/readyz", "", "", map[string]string{"apikey": ""})
+	if rec.Code != 503 || !strings.Contains(rec.Body.String(), schema.Required) {
+		t.Fatalf("schema behind: %d %s", rec.Code, rec.Body.String())
 	}
 	e.runner.systemErr = pgErr("08006", "connection failure")
 	rec = e.do(http.MethodGet, "/readyz", "", "", map[string]string{"apikey": ""})
-	if rec.Code != 503 {
-		t.Fatalf("%d", rec.Code)
+	if rec.Code != 503 || rec.Body.String() != "database unavailable" {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 }
 

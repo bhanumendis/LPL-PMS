@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Stat strip: one surface holding a few capsules, each a count with an optional delta and a
  * click-through. Replaces rows of separate KPI cards.

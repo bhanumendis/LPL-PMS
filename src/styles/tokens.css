@@ -1,4 +1,4 @@
-/*! Lyceum Placements - Placement Management System | Copyright (c) 2026 Bhanu Mendis. All rights reserved. | Author: Bhanu Mendis, Group IT, Lyceum Global Holdings */
+/*! Lyceum Placements - Placement Management System | Developed by Bhanu Mendis - Group IT */
 /* Design tokens. Light on :root, dark on html[data-theme="dark"]. Verified by scripts/contrast.mjs. */
 
 :root {
@@ -82,11 +82,6 @@
   --r-md: 14px;
   --r-lg: 20px;
   --r-xl: 26px;
-  --spring: cubic-bezier(0.34, 1.28, 0.5, 1);
-  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
-  --t-fast: 0.18s;
-  --t-med: 0.32s;
-  --t-slow: 0.55s;
   --focus: #1240b3;
 
   /* v5: spacing, radius, motion, layers */
@@ -98,9 +93,16 @@
   --page-gutter: clamp(24px, 2.6vw, 56px);
   --rail-w: 76px;
   --r-pill: 999px;
+  /* Motion: one duration scale and three curves.
+     --ease-out   everything that arrives or responds: fast start, long settle, no overshoot;
+     --ease-in    everything that leaves: gathers speed and is gone (exits are one step shorter);
+     --spring     tactile moments only (a press releasing, a switch, a sheet let go), the one
+                  curve allowed to overshoot. Durations are in src/lib/ui/presence.ts too. */
   --d-1: 120ms; --d-2: 200ms; --d-3: 320ms; --d-4: 480ms; --d-chart: 900ms;
-  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
   --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+  --spring: cubic-bezier(0.34, 1.28, 0.5, 1);
   --z-page: 1; --z-rail: 20; --z-bar: 30; --z-dock: 31; --z-popover: 50; --z-sheet: 60; --z-modal: 70; --z-toast: 80;
   --t-display: 32px;
 

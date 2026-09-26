@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 package httpapi
 
 import (
@@ -194,7 +193,7 @@ func newEnv(t *testing.T, opts ...func(*Deps)) *testEnv {
 	d := Deps{
 		Config: config.Config{
 			AnonKey: "anon-key", ServiceRoleKey: "service-key",
-			MaxBodyBytes: 1 << 20, RequestTimeout: 5 * time.Second, CORSAllowOrigin: "*",
+			MaxBodyBytes: 1 << 20, RequestTimeout: 5 * time.Second, CORSAllowOrigins: []string{"*"},
 		},
 		Runner:   runner,
 		Resolver: fakeResolver{tokens: principals()},

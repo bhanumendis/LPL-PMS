@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Focus trap shared by dialogs, popovers and sheets. Layers stack: Escape and Tab cycling
  * belong to the topmost active layer only, so a popover inside a dialog closes first.

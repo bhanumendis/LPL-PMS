@@ -1,12 +1,11 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Small shared hooks: viewport queries, remembered preferences, the tab session id.
  */
-import { useCallback, useState, useSyncExternalStore } from "react";
-import { uid } from "./store";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { uid } from "./ids";
 
 /** Breakpoints used by the shell. Forms keep their own 640 px rule. */
 export const BP = {
@@ -68,3 +67,16 @@ export function sessionId(): string {
   } catch { return "no-session"; }
 }
 export function useSessionId(): string { return sessionId(); }
+
+/** The value once it has stopped changing for `ms` (search boxes: one request per pause, not per key). */
+export function useDebounced<T>(value: T, ms = 250): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = window.setTimeout(() => setV(value), ms);
+    return () => window.clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
+
+/** Searches go to the server from three characters: shorter terms cannot use its index. */
+export const SEARCH_MIN = 3;

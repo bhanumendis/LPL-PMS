@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Supabase adapter — PostgREST for data, GoTrue for identity, hand-rolled over fetch so the
  * single-file build carries no extra dependency.
@@ -13,7 +12,7 @@
  *      See supabase/schema.sql — the policies are the access control, not this code.
  *   3. Registration is closed. The only sign-up the database accepts is the first
  *      administrator on an empty project. Every other account is created by an
- *      administrator through the admin-users Edge Function (supabase/functions/admin-users).
+ *      administrator through lpl-api's admin-users endpoint (server/internal/httpapi/adminusers.go).
  */
 import type { AuditEntry, AuditState, CaseRecord, CasesState, OrgConfig, OrgState, PromptTemplate, PromptsState, User } from "./types";
 import type { AuditEventType, Change, EntityType } from "./audit";
@@ -21,22 +20,31 @@ import type { AuditQuery } from "./store";
 import { defaultAudit, defaultCases, defaultConfig, defaultPrompts, normalizeConfig } from "./defaults";
 import type { NotificationRow, NotificationState, NotificationType, Priority } from "@/notifications/types";
 import type { PushDevice, PushSubscriptionInput } from "@/notifications/push";
+import { BROWSER_STORAGE_ALLOWED } from "./runtime";
+import { caseQueryToWire, clampLimit, type CaseFilter, type CaseQuery, type CaseRow, type Dashboard, type GateQuery, type GateRow, type GateStats, type Page, type ReadModel, type RegisterCursor, type TransferQuery, type TransferRow, type UserCursor, type UserQuery, type UserRow as ProfileListRow } from "./queries";
 
 export interface ServerConfig { url: string; anonKey: string }
 
 const SERVER_KEY = "lpl:pms:server";
 const SESSION_KEY = "lpl:pms:server-session";
 
-/** Build-time configuration, used when the app is served rather than opened as a file. */
+/**
+ * Build-time connection: VITE_API_URL points at lpl-api (or, during development, straight at
+ * a Supabase project), VITE_API_ANON_KEY is the public key. The v5 names are still read.
+ */
 function buildTimeConfig(): ServerConfig | null {
   const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
-  const url = env.VITE_SUPABASE_URL;
-  const anonKey = env.VITE_SUPABASE_ANON_KEY;
+  const url = env.VITE_API_URL || env.VITE_SUPABASE_URL;
+  const anonKey = env.VITE_API_ANON_KEY || env.VITE_SUPABASE_ANON_KEY;
   return url && anonKey ? { url: url.replace(/\/+$/, ""), anonKey } : null;
 }
 
-/** A connection entered in Settings wins over the build-time one, so one file can be repointed. */
+/**
+ * Production: the build-time connection and nothing else. Development: a connection entered
+ * in Settings wins over the build-time one, so a local build can be pointed at a test stack.
+ */
 export function readServerConfig(): ServerConfig | null {
+  if (!BROWSER_STORAGE_ALLOWED) return buildTimeConfig();
   try {
     const raw = localStorage.getItem(SERVER_KEY);
     if (raw) {
@@ -48,6 +56,7 @@ export function readServerConfig(): ServerConfig | null {
 }
 
 export function writeServerConfig(cfg: ServerConfig | null): void {
+  if (!BROWSER_STORAGE_ALLOWED) return;
   try {
     if (cfg) localStorage.setItem(SERVER_KEY, JSON.stringify({ url: cfg.url.replace(/\/+$/, ""), anonKey: cfg.anonKey }));
     else localStorage.removeItem(SERVER_KEY);
@@ -81,6 +90,12 @@ export class ServerError extends Error {
 
 export type AdminUserResult = { ok: true; authId: string } | { ok: false; error: string; notDeployed?: boolean };
 
+/** What to do when lpl-api did not issue a sign-in. A production build is fixed to its API,
+ * so there is nothing to reconnect: Group IT checks the server. */
+export const NOT_DEPLOYED_HINT = BROWSER_STORAGE_ALLOWED
+  ? "Sign-ins are issued by the API server (lpl-api). Connect this workspace to its address under Settings → Server connection, not to the database project directly."
+  : "Sign-ins are issued by the API server (lpl-api), which did not answer. Try again in a minute; if it keeps failing, ask Group IT to check the server.";
+
 class Client {
   private session: Session | null = readSession();
   private refreshing: Promise<void> | null = null;
@@ -88,6 +103,17 @@ class Client {
   constructor(readonly cfg: ServerConfig) {}
 
   get signedIn(): boolean { return this.session !== null; }
+
+  /** The identity in the current access token, read locally (no request). */
+  get tokenSubject(): string | null {
+    const t = this.session?.accessToken;
+    if (!t) return null;
+    try {
+      const b64 = t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+      const sub = (JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4))) as { sub?: unknown }).sub;
+      return typeof sub === "string" ? sub : null;
+    } catch { return null; }
+  }
 
   private headers(json = true): Record<string, string> {
     const h: Record<string, string> = { apikey: this.cfg.anonKey, Authorization: `Bearer ${this.session?.accessToken ?? this.cfg.anonKey}` };
@@ -107,12 +133,17 @@ class Client {
   private async refresh(): Promise<void> {
     const rt = this.session?.refreshToken;
     if (!rt) return;
-    const res = await fetch(`${this.cfg.url}/auth/v1/token?grant_type=refresh_token`, {
-      method: "POST", headers: { apikey: this.cfg.anonKey, "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: rt }),
-    });
-    if (!res.ok) { this.setSession(null); return; }
-    this.setSession(await res.json() as GoTrueToken);
+    let res: Response;
+    try {
+      res = await fetch(`${this.cfg.url}/auth/v1/token?grant_type=refresh_token`, {
+        method: "POST", headers: { apikey: this.cfg.anonKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: rt }),
+      });
+    } catch { return; } // unreachable: keep the session and try again on the next request
+    if (res.ok) { this.setSession(await res.json() as GoTrueToken); return; }
+    // Only the identity provider refusing the refresh token ends the session; a 5xx or a
+    // rate limit is its problem, not a sign-out.
+    if (res.status >= 400 && res.status < 500 && res.status !== 429) this.setSession(null);
   }
 
   private setSession(tok: GoTrueToken | null): void {
@@ -162,13 +193,16 @@ class Client {
     if (!this.session) return null;
     await this.ensureFresh();
     if (!this.session) return null;
-    const res = await fetch(`${this.cfg.url}/auth/v1/user`, { headers: this.headers(false) });
-    if (!res.ok) { this.setSession(null); return null; }
-    const u = await res.json() as { id: string };
-    return u.id;
+    let res: Response | null = null;
+    try { res = await fetch(`${this.cfg.url}/auth/v1/user`, { headers: this.headers(false) }); } catch { /* unreachable */ }
+    if (res?.ok) return (await res.json() as { id: string }).id;
+    if (res && (res.status === 401 || res.status === 403)) { this.setSession(null); return null; }
+    // The identity provider is down or unreachable. The token's subject stands in: it grants
+    // nothing here, since the API verifies the token on every request anyway.
+    return this.tokenSubject;
   }
 
-  // ---- administrator-only account management (Edge Function, service role stays on the server) ----
+  // ---- administrator-only account management (lpl-api; the service role stays on the server) ----
 
   async adminUsers(action: "create" | "set_password" | "deactivate" | "reactivate", payload: Record<string, unknown>): Promise<AdminUserResult> {
     await this.ensureFresh();
@@ -176,10 +210,10 @@ class Client {
     try {
       res = await fetch(`${this.cfg.url}/functions/v1/admin-users`, { method: "POST", headers: this.headers(), body: JSON.stringify({ action, ...payload }) });
     } catch {
-      return { ok: false, error: "Could not reach the admin-users function. Check the project URL and that the function is deployed.", notDeployed: true };
+      return { ok: false, error: "Could not reach the server to issue the sign-in. Check the server address and try again.", notDeployed: true };
     }
     const body = await res.json().catch(() => ({})) as { auth_id?: string; error?: string };
-    if (res.status === 404) return { ok: false, error: "The admin-users Edge Function is not deployed on this project. Deploy supabase/functions/admin-users, then try again.", notDeployed: true };
+    if (res.status === 404) return { ok: false, error: "This server does not issue sign-ins.", notDeployed: true };
     if (!res.ok) return { ok: false, error: body.error || `The server refused the request (${res.status}).` };
     return { ok: true, authId: String(body.auth_id ?? "") };
   }
@@ -193,12 +227,13 @@ class Client {
     return await res.json() as T[];
   }
 
-  async upsert(table: string, rows: unknown[], onConflict = "id"): Promise<void> {
+  /** A plain INSERT of new rows: only the insert policy applies. A duplicate id answers 409. */
+  async insert(table: string, rows: unknown[]): Promise<void> {
     if (!rows.length) return;
     await this.ensureFresh();
-    const res = await fetch(`${this.cfg.url}/rest/v1/${table}?on_conflict=${onConflict}`, {
+    const res = await fetch(`${this.cfg.url}/rest/v1/${table}`, {
       method: "POST",
-      headers: { ...this.headers(), Prefer: "return=minimal,resolution=merge-duplicates" },
+      headers: { ...this.headers(), Prefer: "return=minimal" },
       body: JSON.stringify(rows),
     });
     if (!res.ok) throw new ServerError(await readableRestError(res), res.status);
@@ -209,10 +244,12 @@ class Client {
     await this.ensureFresh();
     const res = await fetch(`${this.cfg.url}/rest/v1/rpc/${fn}`, { method: "POST", headers: this.headers(), body: JSON.stringify(args) });
     if (!res.ok) throw new ServerError(await readableRestError(res), res.status);
-    return await res.json() as T;
+    // A function returning void answers 204 (PostgREST) or an empty JSON string (lpl-api).
+    const text = res.status === 204 ? "" : await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
   }
 
-  /** A plain UPDATE. Upsert would also need the INSERT policy, which most roles lack. */
+  /** A plain UPDATE of existing rows: only the update policy and the BEFORE UPDATE guards apply. */
   async patch(table: string, query: string, values: Record<string, unknown>): Promise<void> {
     await this.ensureFresh();
     const res = await fetch(`${this.cfg.url}/rest/v1/${table}?${query}`, {
@@ -245,6 +282,14 @@ function readableAuthError(body: unknown, status: number): string {
 async function readableRestError(res: Response): Promise<string> {
   const body = await res.json().catch(() => null) as { message?: string; hint?: string } | null;
   if (res.status === 401 || res.status === 403) return "Your session does not permit that. Sign in again, or ask an administrator to check your role.";
+  if (res.status === 409 && body?.hint === "stale_revision") return body.message ?? "This record was changed by someone else. Reload and try again.";
+  // Database and gateway internals never reach the user. The API's request id is the reference
+  // support looks up in the server log.
+  if (res.status >= 500) {
+    const ref = res.headers.get("x-request-id");
+    return `The server could not complete the request. Try again in a moment.${ref ? ` Reference ${ref}.` : ""}`;
+  }
+  if (res.status === 429) return "Too many requests. Wait a minute and try again.";
   return body?.message ? `${body.message}${body.hint ? ` — ${body.hint}` : ""}` : `Request failed (${res.status}).`;
 }
 
@@ -257,7 +302,7 @@ interface UserRow {
   id: string; auth_id: string | null; email: string; name: string; phone: string | null; branch: string | null;
   role: User["role"]; active: boolean; created_at: string; created_by: string | null; last_sign_in_at: string | null;
 }
-interface CaseRow { id: string; ref: string; status: string; counsellor_id: string | null; student_user_id: string | null; rev: number; updated_at: string; data: CaseRecord }
+interface CaseDbRow { id: string; ref: string; status: string; counsellor_id: string | null; student_user_id: string | null; rev: number; updated_at: string; data: CaseRecord }
 interface AuditRow {
   id: string; at: string; actor_id: string; actor_name: string; actor_role: User["role"]; action: string; target: string | null; detail: string | null;
   event_type?: string | null; entity_type?: string | null; entity_id?: string | null; entity_label?: string | null; outcome?: string | null;
@@ -286,21 +331,25 @@ function toUser(r: UserRow): User {
   };
 }
 
-function fromUser(u: User, authId?: string | null): Omit<UserRow, "auth_id"> & { auth_id?: string | null } {
-  const row: Omit<UserRow, "auth_id"> & { auth_id?: string | null } = {
-    id: u.id, email: u.email.toLowerCase(), name: u.name, phone: u.phone ?? null, branch: u.branch ?? null,
-    role: u.role, active: u.active, created_at: u.createdAt, created_by: u.createdBy ?? null,
-    last_sign_in_at: u.lastSignInAt ?? null,
+/** The profile columns a client may send; id, auth_id and timestamps belong to the database. */
+type UserColumns = Pick<UserRow, "email" | "name" | "phone" | "branch" | "role" | "active" | "created_by" | "last_sign_in_at">;
+
+function userColumns(u: User): UserColumns {
+  return {
+    email: u.email.trim().toLowerCase(), name: u.name, phone: u.phone ?? null, branch: u.branch ?? null,
+    role: u.role, active: u.active, created_by: u.createdBy ?? null, last_sign_in_at: u.lastSignInAt ?? null,
   };
-  if (authId !== undefined) row.auth_id = authId;
-  return row;
 }
 
-function fromCase(c: CaseRecord): CaseRow {
-  return {
-    id: c.id, ref: c.ref, status: c.status, counsellor_id: c.counsellorId ?? null,
-    student_user_id: c.studentUserId ?? null, rev: c.rev ?? 0, updated_at: c.updatedAt, data: c,
-  };
+/**
+ * Only the columns that actually changed. The profile guard compares old and new values
+ * column by column, so sending an unchanged column costs nothing but sending a normalised
+ * one (an email in a different case, say) would trip a permission it has no reason to need.
+ */
+function changedColumns<T extends object>(before: T, after: T): Partial<T> {
+  const out: Partial<T> = {};
+  for (const k of Object.keys(after) as (keyof T)[]) if (JSON.stringify(after[k]) !== JSON.stringify(before[k])) out[k] = after[k];
+  return out;
 }
 
 function fromAudit(e: AuditEntry): AuditRow {
@@ -322,8 +371,47 @@ function toAudit(r: AuditRow): AuditEntry {
   };
 }
 
-function fromPrompt(p: PromptTemplate): PromptRow {
-  return { id: p.id, title: p.title, status: p.status, version: p.version, updated_at: p.updatedAt, updated_by: p.updatedBy, data: p };
+/** snake_case → camelCase keys. */
+function camel(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) out[k.replace(/_([a-z0-9])/g, (_m, c: string) => c.toUpperCase())] = v;
+  return out;
+}
+
+/** Instants from the database ("…+00:00") in the ISO form the rest of the client uses. */
+const iso = (v: unknown): string | null => (typeof v === "string" && v ? new Date(v).toISOString() : null);
+const CASE_INSTANTS = ["gatePendingAt", "cisStartAt", "cis2From", "offerLapseAt", "arrivalAt", "holdReviewAt", "retentionAnchorAt", "lastEventAt", "cisSentAt", "offerDecidedAt", "retentionDueAt"] as const;
+
+function toCaseRow(r: Record<string, unknown>): CaseRow {
+  const c = camel(r);
+  for (const k of CASE_INSTANTS) c[k] = iso(c[k]);
+  c.createdAt = iso(c.createdAt) ?? "";
+  c.updatedAt = iso(c.updatedAt) ?? "";
+  c.studentName = c.studentName ?? "";
+  c.studentEmail = c.studentEmail ?? "";
+  return c as unknown as CaseRow;
+}
+
+function toTransferRow(r: Record<string, unknown>): TransferRow {
+  const c = camel(r);
+  c.id = c.transferId; delete c.transferId;
+  c.at = iso(c.at);
+  return c as unknown as TransferRow;
+}
+
+function toGateRow(r: Record<string, unknown>): GateRow {
+  const c = camel(r);
+  c.id = c.gateId; delete c.gateId;
+  for (const k of ["submittedAt", "decidedAt", "addressedAt"]) c[k] = iso(c[k]);
+  return c as unknown as GateRow;
+}
+
+function toProfileListRow(r: UserRow & { has_sign_in?: boolean; case_id?: string | null; case_ref?: string | null; cursor?: UserCursor }): ProfileListRow {
+  return { ...toUser(r), hasSignIn: !!r.has_sign_in, caseId: r.case_id ?? null, caseRef: r.case_ref ?? null, cursor: r.cursor as UserCursor };
+}
+
+function promptColumns(p: PromptTemplate): Omit<PromptRow, "id"> {
+  return { title: p.title, status: p.status, version: p.version, updated_at: p.updatedAt, updated_by: p.updatedBy, data: p };
 }
 
 // ---------------------------------------------------------------------------
@@ -334,6 +422,9 @@ export class SupabaseBackend {
   readonly kind = "server" as const;
   readonly polling = true;
   readonly client: Client;
+
+  /** The configuration document exactly as stored, so a save changes only the keys that moved. */
+  private storedConfig: Record<string, unknown> = {};
 
   constructor(cfg: ServerConfig) { this.client = new Client(cfg); }
 
@@ -364,58 +455,178 @@ export class SupabaseBackend {
       const empty = await this.client.rpc<boolean>("needs_bootstrap").catch(() => false);
       return { org: { config: { ...defaultConfig(), setupComplete: !empty }, users: {} } as OrgState, cases: defaultCases(), audit: defaultAudit(), prompts: defaultPrompts() };
     }
-    // The audit log is no longer part of the snapshot: the explorer pages it through audit_page.
-    const [orgRows, userRows, caseRows, promptRows] = await Promise.all([
-      this.client.select<OrgRow>("org_config"),
-      this.client.select<UserRow>("app_users"),
-      this.client.select<CaseRow>("cases", "&order=updated_at.desc"),
-      // Prompts are administrator-only; other roles receive an empty set from RLS.
-      this.client.select<PromptRow>("prompts", "&order=updated_at.desc").catch(() => [] as PromptRow[]),
-    ]);
-    const config = { ...normalizeConfig(orgRows[0]?.config ?? {}), setupComplete: true };
-    const users: Record<string, User> = {};
-    userRows.forEach((r) => { users[r.id] = toUser(r); });
+    // What a session needs up front, and nothing that grows with the organisation: the
+    // configuration, the staff directory, the caller's own profile and (for a student) their
+    // own case. Lists, registers and dashboards are read a page at a time (this.read); a case
+    // document is fetched when it is opened (getCase). The audit log pages through audit_page.
+    const [org, prompts] = await Promise.all([this.loadOrg(), this.loadPrompts()]);
+    const self = Object.values(org.users).find((u) => u.id === this.selfId);
+    const caseRows = self?.role === "student" ? await this.client.select<CaseDbRow>("cases", "&order=updated_at.desc") : [];
     const cases: Record<string, CaseRecord> = {};
     caseRows.forEach((r) => { cases[r.id] = r.data; });
+    return { org, cases: { cases, rev: caseRows.reduce((n, r) => n + (r.rev ?? 0), 0) } as CasesState, audit: defaultAudit(), prompts };
+  }
+
+  /** The signed-in profile's id, known after loadOrg. */
+  private selfId: string | null = null;
+
+  /** Configuration, every staff profile, and the caller's own profile (students are paged by users_page). */
+  async loadOrg(): Promise<OrgState> {
+    const sub = this.client.tokenSubject;
+    const [orgRows, staffRows, selfRows] = await Promise.all([
+      this.client.select<OrgRow>("org_config"),
+      this.client.select<UserRow>("app_users", "&role=neq.student"),
+      sub ? this.client.select<UserRow>("app_users", `&auth_id=eq.${encodeURIComponent(sub)}`) : Promise.resolve([] as UserRow[]),
+    ]);
+    this.storedConfig = (orgRows[0]?.config ?? {}) as unknown as Record<string, unknown>;
+    const config = { ...normalizeConfig(orgRows[0]?.config ?? {}), setupComplete: true };
+    const users: Record<string, User> = {};
+    for (const r of [...staffRows, ...selfRows]) users[r.id] = toUser(r);
+    this.selfId = selfRows[0]?.id ?? null;
+    return { config, users } as OrgState;
+  }
+
+  /** Prompts are administrator-only; other roles receive an empty set from RLS. */
+  async loadPrompts(): Promise<PromptsState> {
+    const rows = await this.client.select<PromptRow>("prompts", "&order=updated_at.desc").catch(() => [] as PromptRow[]);
     const prompts: Record<string, PromptTemplate> = {};
-    promptRows.forEach((r) => { prompts[r.id] = r.data; });
-    return {
-      org: { config, users } as OrgState,
-      cases: { cases, rev: caseRows.reduce((n, r) => n + (r.rev ?? 0), 0) } as CasesState,
-      audit: defaultAudit(),
-      prompts: { prompts, rev: promptRows.reduce((n, r) => n + (r.version ?? 0), 0) } as PromptsState,
-    };
+    rows.forEach((r) => { prompts[r.id] = r.data; });
+    return { prompts, rev: rows.reduce((n, r) => n + (r.version ?? 0), 0) } as PromptsState;
+  }
+
+  /** One case document, or null when it does not exist or the caller may not read it. */
+  async getCase(id: string): Promise<CaseRecord | null> {
+    const rows = await this.client.select<CaseDbRow>("cases", `&id=eq.${encodeURIComponent(id)}`);
+    return rows[0]?.data ?? null;
+  }
+
+  /** A new case, at revision 1. */
+  async insertCase(c: CaseRecord): Promise<void> {
+    await this.client.insert("cases", [{ id: c.id, ref: c.ref, rev: 1, data: { ...c, rev: 1 } }]);
+  }
+
+  /** An existing case at its next revision (409 when someone else saved first). */
+  async saveCase(c: CaseRecord): Promise<void> {
+    await this.client.rpc<number>("save_case", { p_id: c.id, p_rev: c.rev, p_data: c });
+  }
+
+  /** One profile by id, as row-level security shows it. */
+  async getUser(id: string): Promise<User | null> {
+    const rows = await this.client.select<UserRow>("app_users", `&id=eq.${encodeURIComponent(id)}`);
+    return rows[0] ? toUser(rows[0]) : null;
+  }
+
+  /** Writes the columns of a profile that changed. */
+  async saveUser(next: User, prev: User): Promise<void> {
+    const diff = changedColumns(userColumns(prev), userColumns(next));
+    if (Object.keys(diff).length) await this.client.patch("app_users", `id=eq.${encodeURIComponent(next.id)}`, diff);
+  }
+
+  /** Whether a profile the caller can see already uses this address (the database's unique key is the backstop). */
+  async emailTaken(email: string): Promise<boolean> {
+    const rows = await this.client.select<UserRow>("app_users", `&email=eq.${encodeURIComponent(email.trim().toLowerCase())}`);
+    return rows.length > 0;
+  }
+
+  /** A counter per topic (cases, users, config, prompts), bumped by every writing statement. */
+  async changeVersions(): Promise<Record<string, number> | null> {
+    if (!this.client.signedIn) return null;
+    return await this.client.rpc<Record<string, number>>("change_versions").catch(() => null);
+  }
+
+  /** Lists, counts, registers and dashboards, answered by the database a page at a time. */
+  readonly read: ReadModel = {
+    casesPage: async (q: CaseQuery): Promise<Page<CaseRow>> => {
+      const limit = clampLimit(q.limit);
+      const rows = await this.client.rpc<Record<string, unknown>[]>("cases_page", { p: caseQueryToWire({ ...q, limit }) });
+      const out = (Array.isArray(rows) ? rows : []).map(toCaseRow);
+      return { rows: out, next: out.length === limit ? out[out.length - 1].cursor : null };
+    },
+    casesCount: async (f: CaseFilter & { now?: string }, cap?: number): Promise<number> =>
+      Number(await this.client.rpc<number>("cases_count", { p: caseQueryToWire({ ...f, ...(cap ? { cap } : {}) }) })),
+    dashboard: async (): Promise<Dashboard> => await this.client.rpc<Dashboard>("dashboard_summary", { p: {} }),
+    transfersPage: async (q: TransferQuery): Promise<Page<TransferRow, RegisterCursor>> => {
+      const limit = clampLimit(q.limit);
+      const rows = await this.client.rpc<Record<string, unknown>[]>("transfers_page", { p: { ...q, limit } });
+      const out = (Array.isArray(rows) ? rows : []).map(toTransferRow);
+      return { rows: out, next: out.length === limit ? out[out.length - 1].cursor : null };
+    },
+    gatesPage: async (q: GateQuery): Promise<Page<GateRow, RegisterCursor>> => {
+      const limit = clampLimit(q.limit);
+      const rows = await this.client.rpc<Record<string, unknown>[]>("gates_page", { p: { ...q, limit } });
+      const out = (Array.isArray(rows) ? rows : []).map(toGateRow);
+      return { rows: out, next: out.length === limit ? out[out.length - 1].cursor : null };
+    },
+    gateStats: async (): Promise<GateStats> => await this.client.rpc<GateStats>("gate_stats"),
+    usersPage: async (q: UserQuery): Promise<Page<ProfileListRow, UserCursor>> => {
+      const limit = clampLimit(q.limit);
+      const rows = await this.client.rpc<(UserRow & { has_sign_in?: boolean; cursor?: UserCursor })[]>("users_page", { p: { ...q, limit } });
+      const out = (Array.isArray(rows) ? rows : []).map(toProfileListRow);
+      return { rows: out, next: out.length === limit ? out[out.length - 1].cursor : null };
+    },
+  };
+
+  /**
+   * Writes only what changed, as INSERTs for new rows and PATCHes for existing ones. The
+   * configuration is one JSON document whose top-level keys answer to different permissions
+   * (permissions → role.write, processors → dataprotection.write, the rest → settings.write),
+   * so the saved document is the stored one with only the changed keys replaced: a Team
+   * Leader editing processors never appears to touch a key they may not write.
+   */
+  async saveOrg(next: OrgState, prev: OrgState) {
+    const moved = (Object.keys(next.config) as (keyof OrgState["config"])[])
+      .filter((k) => k !== "rev" && k !== "setupComplete" && JSON.stringify(next.config[k]) !== JSON.stringify(prev.config[k]));
+    if (moved.length) {
+      const doc: Record<string, unknown> = { ...this.storedConfig };
+      for (const k of moved) doc[k] = next.config[k];
+      doc.rev = next.config.rev;
+      await this.client.patch("org_config", "id=eq.org", { config: doc });
+      this.storedConfig = doc;
+    }
+    const fresh: User[] = [];
+    for (const u of Object.values(next.users)) {
+      const before = prev.users[u.id];
+      if (!before) { fresh.push(u); continue; }
+      const diff = changedColumns(userColumns(before), userColumns(u));
+      if (Object.keys(diff).length) await this.client.patch("app_users", `id=eq.${encodeURIComponent(u.id)}`, diff);
+    }
+    if (fresh.length) await this.client.insert("app_users", fresh.map((u) => ({ id: u.id, created_at: u.createdAt, ...userColumns(u) })));
   }
 
   /**
-   * Writes only what changed. org_config is written only when the configuration itself
-   * differs, so a user-directory change by a role without settings.write never touches it.
+   * A changed case is saved through save_case() with its next revision; the database accepts
+   * it only when the stored revision is exactly one behind (HTTP 409 otherwise) and reports a
+   * case the caller can no longer change (403/404) instead of matching nothing silently. The
+   * row's status and the columns row-level security reads are derived from the document.
    */
-  async saveOrg(next: OrgState, prev: OrgState) {
-    if (JSON.stringify(next.config) !== JSON.stringify(prev.config)) await this.client.upsert("org_config", [{ id: "org", config: next.config }]);
-    const changed = Object.values(next.users).filter((u) => JSON.stringify(u) !== JSON.stringify(prev.users[u.id]));
-    if (changed.length) await this.client.upsert("app_users", changed.map((u) => fromUser(u)));
-  }
-
   async saveCases(next: CasesState, prev: CasesState) {
-    const changed = Object.values(next.cases).filter((c) => {
+    const created: CaseRecord[] = [];
+    for (const c of Object.values(next.cases)) {
       const before = prev.cases[c.id];
-      return !before || before.rev !== c.rev || before.updatedAt !== c.updatedAt;
-    });
-    if (changed.length) await this.client.upsert("cases", changed.map(fromCase));
+      if (!before) { created.push(c); continue; }
+      if (before.rev === c.rev && before.updatedAt === c.updatedAt) continue;
+      await this.client.rpc<number>("save_case", { p_id: c.id, p_rev: c.rev, p_data: c });
+    }
+    if (created.length) await this.client.insert("cases", created.map((c) => ({ id: c.id, ref: c.ref, rev: 1, data: { ...c, rev: 1 } })));
     const removed = Object.keys(prev.cases).filter((id) => !next.cases[id]);
     for (const id of removed) await this.client.remove("cases", `id=eq.${encodeURIComponent(id)}`);
   }
 
   async savePrompts(next: PromptsState, prev: PromptsState) {
-    const changed = Object.values(next.prompts).filter((p) => JSON.stringify(p) !== JSON.stringify(prev.prompts[p.id]));
-    if (changed.length) await this.client.upsert("prompts", changed.map(fromPrompt));
+    const created: PromptTemplate[] = [];
+    for (const p of Object.values(next.prompts)) {
+      const before = prev.prompts[p.id];
+      if (!before) { created.push(p); continue; }
+      if (JSON.stringify(before) !== JSON.stringify(p)) await this.client.patch("prompts", `id=eq.${encodeURIComponent(p.id)}`, promptColumns(p));
+    }
+    if (created.length) await this.client.insert("prompts", created.map((p) => ({ id: p.id, ...promptColumns(p) })));
     const removed = Object.keys(prev.prompts).filter((id) => !next.prompts[id]);
     for (const id of removed) await this.client.remove("prompts", `id=eq.${encodeURIComponent(id)}`);
   }
 
+  /** Audit rows are only ever inserted; the attribution trigger overwrites the actor columns. */
   async pushAudit(entry: AuditEntry) {
-    await this.client.upsert("audit", [fromAudit(entry)]);
+    await this.client.insert("audit", [fromAudit(entry)]);
   }
 
   /** One keyset page of the audit log, newest first; RLS (audit.read) decides what comes back. */
@@ -442,6 +653,18 @@ export class SupabaseBackend {
     return rows[0] ? toUser(rows[0]) : null;
   }
 
+  /** Email domains whose accounts may hold SUPER ADMIN (read-only for every application role). */
+  async groupItDomains(): Promise<string[]> {
+    const rows = await this.client.select<{ domain: string }>("group_it_domains", "&order=domain.asc");
+    return rows.map((r) => r.domain);
+  }
+
+  /** Before the first account exists: the domains the first (SUPER ADMIN) account may use. */
+  async bootstrapDomains(): Promise<string[]> {
+    const d = await this.client.rpc<string[] | null>("bootstrap_domains");
+    return Array.isArray(d) ? d : [];
+  }
+
   /** Reference numbers come from a database sequence so that two staff cannot issue the same one. */
   async nextCaseRef(prefix: string): Promise<string> {
     return await this.client.rpc<string>("next_case_ref", { prefix });
@@ -451,17 +674,13 @@ export class SupabaseBackend {
     await this.client.patch("app_users", `id=eq.${encodeURIComponent(userId)}`, { last_sign_in_at: new Date().toISOString() }).catch(() => undefined);
   }
 
-  async replaceAll(w: { org: OrgState; cases: CasesState; audit: AuditState; prompts: PromptsState }) {
-    await this.client.upsert("org_config", [{ id: "org", config: w.org.config }]);
-    const users = Object.values(w.org.users);
-    if (users.length) await this.client.upsert("app_users", users.map((u) => fromUser(u)));
-    const cases = Object.values(w.cases.cases);
-    // Chunked so a restore does not arrive as one oversized request.
-    for (let i = 0; i < cases.length; i += 25) await this.client.upsert("cases", cases.slice(i, i + 25).map(fromCase));
-    const entries = w.audit.entries.slice(0, 600);
-    for (let i = 0; i < entries.length; i += 100) await this.client.upsert("audit", entries.slice(i, i + 100).map(fromAudit));
-    const prompts = Object.values(w.prompts.prompts);
-    if (prompts.length) await this.client.upsert("prompts", prompts.map(fromPrompt));
+  /**
+   * Whole-workspace restore is a browser-storage feature. On a server it would overwrite live
+   * records from a file with no revision checks, so production data is backed up and restored
+   * with the database's own tools instead (docs/OPERATIONS.md).
+   */
+  async replaceAll(_w: { org: OrgState; cases: CasesState; audit: AuditState; prompts: PromptsState }): Promise<void> {
+    throw new ServerError("Restoring a workspace file is not available on a server. Restore from a database backup instead.", 405);
   }
 
   // ---- notifications: written by database triggers, read through RLS-scoped RPCs ----
@@ -484,9 +703,9 @@ export class SupabaseBackend {
   }
 
   // ---- push subscriptions (own rows under RLS) ----
-  async savePushSubscription(userId: string, sub: PushSubscriptionInput): Promise<void> {
-    const now = new Date().toISOString();
-    await this.client.upsert("push_subscriptions", [{ user_id: userId, endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth, user_agent: sub.userAgent, last_seen_at: now, revoked_at: null }], "endpoint");
+  /** The database files the device under the signed-in user, taking it over from whoever held it before (a shared computer). */
+  async savePushSubscription(_userId: string, sub: PushSubscriptionInput): Promise<void> {
+    await this.client.rpc("save_push_subscription", { p_endpoint: sub.endpoint, p_p256dh: sub.p256dh, p_auth: sub.auth, p_user_agent: sub.userAgent });
   }
   async revokePushSubscription(_userId: string, endpoint: string): Promise<void> {
     await this.client.patch("push_subscriptions", `endpoint=eq.${encodeURIComponent(endpoint)}`, { revoked_at: new Date().toISOString() });
@@ -496,18 +715,8 @@ export class SupabaseBackend {
     return rows.map((r) => ({ endpoint: r.endpoint, createdAt: r.created_at, lastSeenAt: r.last_seen_at, userAgent: r.user_agent ?? undefined }));
   }
 
-  /** Cheap change probe used by polling; null when the project predates the function. */
-  async version(): Promise<string | null> {
-    if (!this.client.signedIn) return null;
-    return await this.client.rpc<string>("workspace_version").catch(() => null);
-  }
-
-  /** The caller's own profile row goes last: every other delete needs its permissions. */
-  async clear() {
-    await this.client.remove("prompts", "id=neq.__none__");
-    await this.client.remove("cases", "id=neq.__none__");
-    await this.client.remove("audit", "id=neq.__none__");
-    await this.client.remove("org_config", "id=neq.__none__");
-    await this.client.remove("app_users", "id=neq.__none__");
+  /** Wiping a live database from a browser is not a feature. */
+  async clear(): Promise<void> {
+    throw new ServerError("Resetting the workspace is not available on a server.", 405);
   }
 }

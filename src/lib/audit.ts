@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Typed audit events. Every builder keeps the v4 `action` label, `target` and `detail` so
  * exports and history stay continuous, and adds the structured columns the explorer filters
@@ -115,7 +114,8 @@ export const EVENTS = {
     action: active ? "Account reactivated" : "Account deactivated", eventType: "update", entityType: "account", entityId: u.id, entityLabel: u.name, target: u.email, detail,
     summary: `${active ? "Reactivated" : "Deactivated"} ${u.name}`, changes: [{ field: "active", label: "Active", old: !active, new: active }],
   }),
-  adminBootstrapped: (u: Pick<UserLike, "id" | "name" | "email">): AuditEvent => ({ action: "Administrator account created", eventType: "create", entityType: "account", entityId: u.id, entityLabel: u.name, target: u.email, summary: "Created the first administrator" }),
+  roleAssigned: (u: Pick<UserLike, "id" | "name" | "email">, from: string, to: string): AuditEvent => ({ action: "Role changed", eventType: "permission", entityType: "user", entityId: u.id, entityLabel: u.name, target: u.email, summary: `Changed ${u.name}'s role from ${from} to ${to}`, changes: [{ field: "role", label: "Role", old: from, new: to }] }),
+  adminBootstrapped: (u: Pick<UserLike, "id" | "name" | "email">): AuditEvent => ({ action: "Super Admin account created", eventType: "create", entityType: "account", entityId: u.id, entityLabel: u.name, target: u.email, summary: "Created the first administrator" }),
 
   // roles
   permissionChanged: (perm: string, role: string, granted: boolean): AuditEvent => ({
@@ -133,10 +133,6 @@ export const EVENTS = {
   backupExported: (): AuditEvent => ({ action: "Workspace backup exported", eventType: "export", entityType: "workspace", summary: "Exported a workspace backup" }),
   backupRestored: (fileName: string, counts?: Record<string, number>): AuditEvent => ({ action: "Workspace restored from backup", eventType: "system", entityType: "workspace", target: fileName, summary: `Restored the workspace from ${fileName}`, meta: counts }),
   workspaceReset: (): AuditEvent => ({ action: "Workspace reset", eventType: "system", entityType: "workspace", summary: "Reset the workspace" }),
-  /** The add/remove pair is audited under the real administrator, not under a sample account,
-      so the trail still shows who put demonstration records into the workspace and when. */
-  sampleDataAdded: (users: number, cases: number): AuditEvent => ({ action: "Sample data added", eventType: "system", entityType: "workspace", summary: `Added ${cases} sample cases and ${users} sample accounts`, meta: { users, cases } }),
-  sampleDataRemoved: (users: number, cases: number): AuditEvent => ({ action: "Sample data removed", eventType: "delete", entityType: "workspace", summary: `Removed ${cases} sample cases and ${users} sample accounts`, meta: { users, cases } }),
   serverConnected: (url: string): AuditEvent => ({ action: "Server connected", eventType: "system", entityType: "workspace", target: url, summary: `Connected to ${url}` }),
   serverDisconnected: (): AuditEvent => ({ action: "Server disconnected", eventType: "system", entityType: "workspace", summary: "Disconnected from the server" }),
 

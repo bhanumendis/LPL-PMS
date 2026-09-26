@@ -1,14 +1,38 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
- * Motion helpers. Both are progressive: without the View Transitions API or under
+ * Motion helpers. All are progressive: without the View Transitions API or under
  * prefers-reduced-motion the update simply happens, and nothing waits on an animation.
  */
 import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import { BP, matches } from "./hooks";
+
+/** --ease-out and --d-3 in tokens.css, for animations started from script. */
+export const EASE_OUT = "cubic-bezier(0.22, 1, 0.36, 1)";
+export const D3_MS = 320;
+
+/**
+ * Two page-wide details the stylesheet cannot manage alone:
+ * - a background tab pauses its endless animations (loading shimmer and spinners) rather
+ *   than spend the battery on frames nobody sees (`html[data-hidden]`, base.css);
+ * - iOS Safari applies :active only on a page that listens for touches, so without this every
+ *   press on an iPhone would go unanswered.
+ */
+export function installMotion(doc: Document = document): () => void {
+  const root = doc.documentElement;
+  const sync = () => root.toggleAttribute("data-hidden", doc.visibilityState === "hidden");
+  const touch = () => {};
+  sync();
+  doc.addEventListener("visibilitychange", sync);
+  doc.addEventListener("touchstart", touch, { passive: true });
+  return () => {
+    doc.removeEventListener("visibilitychange", sync);
+    doc.removeEventListener("touchstart", touch);
+    root.removeAttribute("data-hidden");
+  };
+}
 
 /** The shared name that morphs a rail row into the case workspace header. */
 export const CASE_HEAD_TRANSITION = "case-head";
@@ -72,7 +96,7 @@ export function useFlip(listRef: RefObject<HTMLElement | null>, deps: unknown[])
         const dy = before.top - after.top;
         if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
         if (typeof el.animate === "function") {
-          el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 320, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" });
+          el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: D3_MS, easing: EASE_OUT });
         }
       }
     }

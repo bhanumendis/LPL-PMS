@@ -1,13 +1,12 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  */
 import { useRef, useState } from "react";
 import { LogOut, Moon, Sun } from "lucide-react";
 import { useSession, LiveBadge, APP_VERSION } from "@/App";
 import { ROLE_LABEL } from "@/lib/rbac";
-import { COPYRIGHT } from "@/lib/brand";
+import { ATTRIBUTION } from "@/lib/brand";
 import { Avatar, Layer, SegmentedSwitch } from "@/lib/ui";
 
 export function ProfileMenu({ extra }: { extra?: React.ReactNode }) {
@@ -40,7 +39,7 @@ export function ProfileMenu({ extra }: { extra?: React.ReactNode }) {
         <div className="menu-sec">
           <button type="button" className="menu-item" onClick={() => { setOpen(false); signOut(); }}><LogOut aria-hidden />Sign out</button>
         </div>
-        <p className="ui xs muted menu-foot">{COPYRIGHT} · v{APP_VERSION}</p>
+        <p className="ui xs muted menu-foot">{ATTRIBUTION} · v{APP_VERSION}</p>
       </Layer>
     </>
   );

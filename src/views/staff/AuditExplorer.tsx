@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Audit explorer: a filtered, keyset-paginated view of the append-only audit log. Rows carry
  * the narrow columns; the field-level diff is read on demand when a row is opened.
@@ -180,6 +179,7 @@ export function AuditExplorer() {
                           <span className="ui small">{e.summary ?? e.action}</span>
                           {e.summary && e.summary !== e.action && <span className="xs muted">{e.action}</span>}
                         </span>
+                        <span className="audit-extra ui xs muted truncate">{e.detail ?? ""}</span>
                         <span className="audit-chips">
                           {e.eventType ? (e.entityLabel || e.entityType) && <Pill tone="navy">{e.entityType ? ENTITY_TYPE_LABEL[e.entityType] : ""}{e.entityLabel ? `${e.entityType ? " · " : ""}${e.entityLabel}` : ""}</Pill> : <Pill>Legacy</Pill>}
                           {e.outcome === "failure" && <Pill tone="bad">Failed</Pill>}

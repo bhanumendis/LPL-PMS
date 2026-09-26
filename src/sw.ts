@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Service worker: receives Web Push messages and opens the deep link on click. It caches
  * nothing (the application is one file) and only runs on hosted builds over HTTPS. Built to

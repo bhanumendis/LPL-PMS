@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 package httpapi
 
 import (
@@ -25,11 +24,11 @@ func TestBuildSelectForClientQueries(t *testing.T) {
 		table, raw, want string
 		args             []any
 	}{
-		{"org_config", "select=*", `select count(*)::int, coalesce(json_agg(row_to_json(t)), '[]'::json)::text from (select * from "public"."org_config") t`, nil},
-		{"cases", "select=*&order=updated_at.desc", `select count(*)::int, coalesce(json_agg(row_to_json(t)), '[]'::json)::text from (select * from "public"."cases" order by "updated_at" desc) t`, nil},
-		{"audit", "select=*&order=at.desc&limit=600", `select count(*)::int, coalesce(json_agg(row_to_json(t)), '[]'::json)::text from (select * from "public"."audit" order by "at" desc limit 600) t`, nil},
-		{"app_users", "select=*&auth_id=eq.abc", `select count(*)::int, coalesce(json_agg(row_to_json(t)), '[]'::json)::text from (select * from "public"."app_users" where "auth_id" = $1::uuid) t`, []any{"abc"}},
-		{"app_users", "active=is.true&order=name.asc.nullslast&offset=5", `select count(*)::int, coalesce(json_agg(row_to_json(t)), '[]'::json)::text from (select * from "public"."app_users" where "active" is true order by "name" asc nulls last offset 5) t`, nil},
+		{"org_config", "select=*", `select count(*)::int, coalesce(json_agg(row_to_json(t)), '[]'::json)::text from (select "id", "config", "updated_at" from "public"."org_config") t`, nil},
+		{"cases", "select=*&order=updated_at.desc", `select count(*)::int, coalesce(json_agg(row_to_json(t)), '[]'::json)::text from (select "id", "ref", "status", "counsellor_id", "student_user_id", "rev", "updated_at", "data" from "public"."cases" order by "updated_at" desc) t`, nil},
+		{"audit", "select=*&order=at.desc&limit=600", `select count(*)::int, coalesce(json_agg(row_to_json(t)), '[]'::json)::text from (select "id", "at", "actor_id", "actor_name", "actor_role", "action", "target", "detail", "event_type", "entity_type", "entity_id", "entity_label", "outcome", "source", "session_id", "summary", "changes", "meta" from "public"."audit" order by "at" desc limit 600) t`, nil},
+		{"app_users", "select=*&auth_id=eq.abc", `select count(*)::int, coalesce(json_agg(row_to_json(t)), '[]'::json)::text from (select "id", "auth_id", "email", "name", "phone", "branch", "role", "active", "created_at", "created_by", "last_sign_in_at", "updated_at" from "public"."app_users" where "auth_id" = $1::uuid) t`, []any{"abc"}},
+		{"app_users", "active=is.true&order=name.asc.nullslast&offset=5", `select count(*)::int, coalesce(json_agg(row_to_json(t)), '[]'::json)::text from (select "id", "auth_id", "email", "name", "phone", "branch", "role", "active", "created_at", "created_by", "last_sign_in_at", "updated_at" from "public"."app_users" where "active" is true order by "name" asc nulls last offset 5) t`, nil},
 	}
 	for _, c := range cases {
 		got, args, err := buildSelect(query(t, c.table, c.raw))

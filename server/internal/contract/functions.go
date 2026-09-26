@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 package contract
 
 import "fmt"
@@ -40,11 +39,28 @@ var Functions = map[string]Function{
 	"mark_notifications_read":     {Name: "mark_notifications_read", Params: []string{"p_ids"}, Types: []string{"text[]"}},
 	"mark_all_notifications_read": {Name: "mark_all_notifications_read"},
 	"prune_notifications":         {Name: "prune_notifications", Params: []string{"p_days"}, Types: []string{"integer"}},
+	// v6: a device subscribes (the endpoint moves to whoever subscribes it now)
+	"save_push_subscription": {Name: "save_push_subscription", Params: []string{"p_endpoint", "p_p256dh", "p_auth", "p_user_agent"}},
 	// v5: audit
 	"audit_page": {Name: "audit_page",
 		Params: []string{"p_before", "p_actor", "p_event_type", "p_entity_type", "p_entity_id", "p_from", "p_to", "p_q", "p_limit"},
 		Types:  []string{"timestamptz", "text", "text", "text", "text", "timestamptz", "timestamptz", "text", "integer"}, Set: true},
 	"audit_detail": {Name: "audit_detail", Params: []string{"p_id"}, Set: true},
+	// v6: role model
+	"bootstrap_domains":  {Name: "bootstrap_domains"},
+	"can_manage_account": {Name: "can_manage_account", Params: []string{"p_target"}},
+	"is_group_it_email":  {Name: "is_group_it_email", Params: []string{"p_email"}},
+	// v6: paged reads and aggregates (one JSON argument each)
+	"cases_page":        {Name: "cases_page", Params: []string{"p"}, Types: []string{"jsonb"}, Set: true},
+	"cases_count":       {Name: "cases_count", Params: []string{"p"}, Types: []string{"jsonb"}},
+	"dashboard_summary": {Name: "dashboard_summary", Params: []string{"p"}, Types: []string{"jsonb"}},
+	"transfers_page":    {Name: "transfers_page", Params: []string{"p"}, Types: []string{"jsonb"}, Set: true},
+	"users_page":        {Name: "users_page", Params: []string{"p"}, Types: []string{"jsonb"}, Set: true},
+	"gates_page":        {Name: "gates_page", Params: []string{"p"}, Types: []string{"jsonb"}, Set: true},
+	"gate_stats":        {Name: "gate_stats"},
+	"change_versions":   {Name: "change_versions"},
+	// v6: case saves with revision check and an explicit "nothing was saved"
+	"save_case": {Name: "save_case", Params: []string{"p_id", "p_rev", "p_data"}, Types: []string{"text", "integer", "jsonb"}},
 }
 
 // UnknownFunction is PostgREST's answer when no function matches the name and arguments.

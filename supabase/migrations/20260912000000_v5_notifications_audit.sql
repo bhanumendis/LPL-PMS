@@ -1,6 +1,5 @@
 -- Lyceum Placements — Placement Management System
--- Copyright (c) 2026 Bhanu Mendis. All rights reserved.
--- Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+-- Copyright © Bhanu Mendis - LGH IT
 --
 -- v5 additions: structured audit columns and paged audit RPCs; per-recipient notifications
 -- written by database triggers; Web Push subscriptions. Idempotent. The same block is appended
@@ -89,7 +88,7 @@ create table if not exists public.notifications (
 create index if not exists notifications_unread_idx    on public.notifications (recipient_id, at desc) where read_at is null;
 create index if not exists notifications_recipient_idx on public.notifications (recipient_id, at desc);
 create index if not exists notifications_push_idx      on public.notifications (at) where pushed_at is null;
-comment on table public.notifications is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. Per-recipient notifications written by database triggers.';
+comment on table public.notifications is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Per-recipient notifications written by database triggers.';
 
 create table if not exists public.push_subscriptions (
   id            text primary key default gen_random_uuid()::text,
@@ -103,7 +102,7 @@ create table if not exists public.push_subscriptions (
   revoked_at    timestamptz
 );
 create index if not exists push_subscriptions_user_idx on public.push_subscriptions (user_id);
-comment on table public.push_subscriptions is 'Lyceum Placements — Placement Management System. Copyright (c) 2026 Bhanu Mendis. All rights reserved. Web Push subscriptions, one row per device.';
+comment on table public.push_subscriptions is 'Lyceum Placements — Placement Management System. Copyright © Bhanu Mendis - LGH IT. Web Push subscriptions, one row per device.';
 
 -- Roles holding a matrix cell, from the configured matrix or the standard model; admin always.
 create or replace function public.roles_holding(perm text) returns text[]

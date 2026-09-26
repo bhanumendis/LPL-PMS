@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Vitest setup: DOM matchers plus the browser APIs jsdom does not provide.
  */
@@ -34,5 +33,6 @@ class ResizeObserverStub {
 const w = window as unknown as { ResizeObserver?: unknown };
 if (!w.ResizeObserver) w.ResizeObserver = ResizeObserverStub;
 
-if (!window.scrollTo) window.scrollTo = () => {};
+// jsdom defines scrollTo as a "not implemented" stub that logs on every navigation.
+window.scrollTo = (() => {}) as typeof window.scrollTo;
 if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};

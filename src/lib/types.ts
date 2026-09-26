@@ -1,9 +1,12 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  */
-export type Role = "admin" | "team_leader" | "counsellor" | "student";
+/**
+ * super_admin  Group IT: system owner, restricted to Group IT email domains.
+ * admin        Placement Team: operational administration, no system or security functions.
+ */
+export type Role = "super_admin" | "admin" | "team_leader" | "counsellor" | "student";
 
 /**
  * Enterprise RBAC. Every protected resource exposes the same five actions and a role
@@ -12,7 +15,7 @@ export type Role = "admin" | "team_leader" | "counsellor" | "student";
  */
 export const RESOURCES = [
   "case", "sensitive", "assignment", "document", "review", "gate", "escalation", "analytics",
-  "staff", "account", "role", "audit", "settings", "dataprotection", "prompt",
+  "staff", "account", "role", "audit", "settings", "dataprotection", "system", "prompt",
 ] as const;
 export type Resource = (typeof RESOURCES)[number];
 
@@ -36,8 +39,9 @@ export type Permission =
   | "account.write" | "account.delete"
   | "role.view" | "role.read" | "role.write"
   | "audit.view" | "audit.read" | "audit.download"
-  | "settings.view" | "settings.read" | "settings.write" | "settings.delete"
+  | "settings.view" | "settings.read" | "settings.write"
   | `dataprotection.${Action}`
+  | "system.view" | "system.read" | "system.write" | "system.delete"
   | `prompt.${Action}`;
 
 /** How far a role's case visibility reaches. Applied on top of `case.view` / `case.read`. */
@@ -224,8 +228,10 @@ export interface OrgConfig {
   channels: string[];
   branches: string[];
   caseCounter: number;
-  /** Web Push: the public half of the VAPID pair used by the push-dispatch function. */
+  /** Web Push: the public half of lpl-api's VAPID pair (VAPID_PUBLIC_KEY); browsers subscribe with it. */
   push?: { vapidPublicKey?: string };
+  /** Browser-storage workspaces only: the role model the stored matrix was written for. */
+  rbacVersion?: number;
   rev: number;
 }
 

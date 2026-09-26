@@ -1,8 +1,8 @@
-# Lyceum Placements — Placement Management System (v5)
+# Lyceum Placements — Placement Management System (v6)
 
 Production build of the Placement Management System for Lyceum Placements (Private) Limited.
-React 18 + Vite 5 + TypeScript, built as a single HTML file, backed by Supabase.
-Copyright (c) 2026 Bhanu Mendis. All rights reserved.
+React 18 + Vite 5 + TypeScript, built as a single HTML file, served by **lpl-api** (Go) over a Supabase Postgres and GoTrue.
+Developed by Bhanu Mendis - Group IT
 Built on process document LGH/IMS/PROC/LPL/001: 31 process steps, presented as 9 stages, with Team Leader gates at steps 16 and 19 and three tracked service level clocks (CIS, offer lapse, follow-up).
 
 ## Build
@@ -13,7 +13,13 @@ npm run verify       # typecheck + eslint + vitest (unit, component, axe, perfor
 npm run test         # vitest only
 npm run contrast     # WCAG AAA verification of every design-token pair, both themes
 npm run build        # verify, then -> dist/LPL_Placement_Management_System.html (single file) and dist/sw.js
+                     # a production build needs VITE_API_URL (https) and VITE_API_ANON_KEY
+npm run test:e2e     # the client against a real lpl-api and Postgres (scripts/e2e-api.sh)
+npm run test:ui      # every role at eight viewports, axe WCAG 2.2 AA, then Core Web Vitals (scripts/e2e-ui.sh)
 ```
+
+More: `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md` (release, rollback, migrations),
+`docs/SECURITY.md`, `docs/RBAC.md`, `server/README.md`.
 
 No runtime dependency beyond React and lucide-react. The Supabase client is hand-rolled over `fetch` so the single-file build stays dependency-free. Fonts (Poppins, Lora) are embedded as base64 WOFF2 subsets.
 
@@ -28,7 +34,7 @@ There is no sample or seed data anywhere in the build. A new workspace starts em
 | `src/lib/signals.ts` | Derived per-case signals (progress, stage, step, SLA flags, attention items, severity), computed once per snapshot |
 | `src/lib/rbac.ts` | The resource × action permission matrix, case visibility scope, locked cells |
 | `src/lib/store.ts` | Persistence. Picks an adapter: server → `window.storage` → `localStorage` → memory. Also the audit and notification APIs |
-| `src/lib/server.ts` | Supabase adapter — PostgREST for data, GoTrue for identity, RPCs for audit and notifications, Edge Function for account administration |
+| `src/lib/server.ts` | Server adapter for lpl-api — the PostgREST contract for data, GoTrue (proxied) for identity, RPCs for paged reads, audit and notifications, `admin-users` for account administration |
 | `src/lib/audit.ts` | Typed audit events (`EVENTS.*`) and the field-level diff helper |
 | `src/lib/motion.ts` | View transitions (rail row → case header) and FLIP for reordering lists |
 | `src/lib/ui/*`, `src/lib/charts.tsx` | Design-system primitives (surfaces, page header, stat strip, filter bar, layers and sheets, empty states, skeletons) and SVG charts |
@@ -40,14 +46,12 @@ There is no sample or seed data anywhere in the build. A new workspace starts em
 | `src/sw.ts` | Service worker for Web Push (hosted builds only; built to `dist/sw.js`) |
 | `src/test/*` | Test setup, fixtures, the axe accessibility suite and the performance guards |
 | `scripts/contrast.mjs` | Computes every token pair's contrast ratio from `tokens.css`; `npm run verify` stops on any pair below AAA |
-| `supabase/schema.sql` | Tables, helper functions, row-level security mirroring the permission matrix, closed-registration trigger, case write guard, v5 audit columns, notifications and push subscriptions |
-| `supabase/migrations/20260912_notifications_audit.sql` | The v5 additions for a project already provisioned from the v4 schema |
-| `supabase/functions/admin-users/` | Edge Function through which administrators create sign-ins and set temporary passwords |
-| `supabase/functions/push-dispatch/` | Edge Function that delivers pending notifications to Web Push subscriptions |
-| `server/` | **lpl-api** (Go): serves the same `/rest/v1`, `/auth/v1` and `/functions/v1/admin-users` contract in place of Supabase's request path, against the unchanged schema. See `server/README.md` |
-| `.github/workflows/pages.yml` | Builds and publishes the test site to GitHub Pages on every push to `main` |
-| `.github/workflows/server.yml` | Builds and tests `server/` against a Postgres carrying `supabase/schema.sql` |
-| `LICENSE` | Ownership notice, all rights reserved |
+| `supabase/migrations/` | One idempotent file per schema version (v4 base, v5 notifications and audit, v6 write path, role model, case index, workers, attribution) |
+| `supabase/schema.sql` | Generated from the migrations (`node scripts/build-schema.mjs`) for a new project |
+| `server/` | **lpl-api** (Go): serves `/rest/v1`, `/auth/v1` and `/functions/v1/admin-users` in place of Supabase's request path, and runs the background work (Web Push delivery, service-level reminders, the shared dashboard, notification retention) that Edge Functions and pg_cron did before v6. See `server/README.md` |
+| `.github/workflows/ci.yml` | Every quality gate on each push and pull request; on `main`, the gated deploy (see `docs/OPERATIONS.md`) |
+| `.github/workflows/rollback.yml`, `migrate.yml` | Manual rollback to a commit that passed CI; gated production migrations |
+| `LICENSE` | Ownership and licence terms |
 
 ## Application shell
 
@@ -61,14 +65,14 @@ Roles whose case scope is *assigned* get a rail on the **left edge that is alway
 
 - **Counsellor:** greeting and one-line position; stat strip (active, overdue, awaiting Team Leader, documents to review); needs-attention queue with direct actions; caseload by stage (click filters the caseload); recent activity; performance (collapsed).
 - **Team Leader:** decisions awaiting me with Review deep links; service-level exposure; open cases by stage; counsellor load; team performance.
-- **Administrator:** system position; stage flow and counsellor load; compliance strip; system health; recent activity from the audit log; performance.
+- **SUPER ADMIN and ADMIN:** system position; stage flow and counsellor load; compliance strip; system health; recent activity from the audit log; performance.
 - **Student:** where the application stands, what is needed next, counsellor and key details.
 
 ## Notifications
 
-Rows in `public.notifications` are written by the database, not the browser: `notify_case_change()` (trigger `cases_notify`) fans out assignment, gate, document and profile events to the right recipients, and `emit_sla_notifications()` raises due-soon and overdue clock notifications — schedule it (for example `select cron.schedule('lpl-sla', '*/15 * * * *', 'select public.emit_sla_notifications()')`). The client polls `notification_state()` with the workspace tick and pages with `notifications_page`; `mark_notifications_read` / `mark_all_notifications_read` are own-rows only. `prune_notifications(days)` trims history.
+Rows in `public.notifications` are written by the database, not the browser: `notify_case_change()` (trigger `cases_notify`) fans out assignment, gate, document and profile events to the right recipients, and lpl-api's reminder worker calls `emit_sla_notifications()` every 15 minutes (`SLA_REMINDER_INTERVAL`) to raise due-soon and overdue clock notifications, once per clock, state and due date. The client polls `notification_state()` with the workspace tick and pages with `notifications_page`; `mark_notifications_read` / `mark_all_notifications_read` are own-rows only. lpl-api prunes notifications older than `NOTIFICATION_RETENTION_DAYS` (90); `prune_notifications(days)` remains for a SUPER ADMIN to trim by hand.
 
-**Web Push** (hosted builds only; the single-file build cannot register a service worker): generate a VAPID key pair (`npx web-push generate-vapid-keys`), paste the public key in Settings → Notifications, deploy `push-dispatch` with secrets `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` and `DISPATCH_SECRET`, then invoke it from a Database Webhook on insert into `public.notifications` or from pg_cron every minute with the header `x-lpl-dispatch-secret`.
+**Web Push** (hosted builds only; the single-file build cannot register a service worker): generate a VAPID key pair (`npx web-push generate-vapid-keys`), give lpl-api `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (a secret) and `VAPID_SUBJECT` (a `mailto:` or `https:` contact), and paste the public key in Settings → Notifications. lpl-api delivers within about ten seconds of a notification being written, only to push services on its allow-list (`PUSH_ENDPOINT_HOSTS`), only to active accounts, and not at all once a notification is a day old.
 
 ## Audit
 
@@ -84,7 +88,11 @@ The audit log is no longer part of the workspace snapshot. The **Audit log** pag
 
 ## Testing
 
-`npm run verify` runs typecheck, eslint and vitest: unit tests for logic, signals, audit, store, motion and hooks; component tests for the shell, dock, palette, rail, notifications, dashboards, cases list and audit explorer; an axe-core WCAG 2.1 A/AA suite over the main screens for every role in both themes; and performance guards (a quiet poll re-renders nothing, the server load reads no audit rows, blur stays on the float tier). Colour contrast is verified by `npm run contrast` rather than axe because jsdom does not compute styles.
+`npm run verify` runs typecheck, eslint, the 184 unit and component tests (logic, store, the
+server adapter's wire contract, views, an axe WCAG A/AA suite in jsdom for every role in both
+themes, performance guards) and the contrast check. The Go suites (`server/`), the end-to-end
+suites (`npm run test:e2e`, `npm run test:ui`) and what each layer proves are listed in
+`docs/ARCHITECTURE.md`; CI runs all of them on every change.
 
 ## Theme
 
@@ -94,112 +102,76 @@ Every text token is verified at **7:1 or better (WCAG 2.1 AAA)** against every s
 
 ## Access control
 
-### Permission matrix
-
-Every protected resource exposes the same five actions and a role either holds a cell or does not:
-
-| Action | Meaning |
-|---|---|
-| View | The area, list or summary is visible and can be navigated to |
-| Read | The full record and its field values can be opened |
-| Write | Records can be created or changed |
-| Delete | Records can be removed, disposed of or reset |
-| Download | Data or files can be exported out of the system |
-
-Resources: cases, special-category fields, counsellor assignment, documents, document review, Team Leader gates, SLA escalations, team analytics, staff profiles, sign-in accounts, roles and permissions, audit log, organisation settings, data protection, Prompt Engineer Workspace.
-
-Case visibility is scoped on top of the matrix: **own** (student), **assigned** (counsellor), **all** (Team Leader, Administrator). Both the matrix and the scope are edited under Roles and permissions and apply immediately.
-
-Two cells are fixed by design and cannot be changed by configuration:
-
-- **Administrator** is the system owner and holds every cell.
-- **Prompt Engineer Workspace** belongs to the Administrator only and cannot be granted to any other role.
-
-### Standard model
-
-| Resource | Administrator | Team Leader | Counsellor | Student |
-|---|---|---|---|---|
-| Cases | all | view read write download | view read write download | view read write (own case) |
-| Special-category fields | all | view read write | view read write | view write (supplies own) |
-| Counsellor assignment | all | view write | view | view |
-| Documents | all | view read download | view read write download | view read write download (own) |
-| Document review | all | view write | view write | view |
-| Team Leader gates | all | view read write | view read | — |
-| SLA escalations | all | view read | — | — |
-| Team analytics | all | view read download | — | — |
-| Staff profiles | all | view read | view | — |
-| Sign-in accounts | write delete | — | — | — |
-| Roles and permissions | all | — | — | — |
-| Audit log | all | view read | — | — |
-| Organisation settings | all | — | — | — |
-| Data protection | all | view read write download | — | — |
-| Prompt Engineer Workspace | all (locked) | — | — | — |
-
-### How it is enforced
-
-Row-level security, not application code. Every data-access policy in `supabase/schema.sql` calls `app_can('resource.action')`, which reads the configured matrix out of `org_config` (falling back to `permission_defaults`) for the calling user's role, and `case_in_scope()` for visibility. A `before update` trigger on `cases` enforces the cells that live inside the case JSON: gate decisions need `gate.write`, uploads `document.write`, reviews `review.write`, removals `document.delete`, reassignment `assignment.write`, disposal `dataprotection.delete`, legal holds `dataprotection.write`; decided gates and uploaded file records are immutable; events are append-only and attributed to the caller; a student can change only their step-2 answers, their own uploads and the two confirmations at steps 26 and 29. Audit rows are attributed by a trigger, never by the client. `org_config` is split by key: `permissions`/`caseScope` need `role.write`, `processors` need `dataprotection.write`, everything else `settings.write`. Workspace backup and restore are Administrator-only.
-
-`prompts` is Administrator-only in every policy, regardless of configuration. No table is granted to the anonymous role; an anonymous caller can only ask `needs_bootstrap()`.
+Roles: **SUPER ADMIN** (Group IT, restricted to Group IT email domains), **ADMIN** (Placement
+Team, operational administration only), Team Leader, Counsellor and Student. Every cell of the
+resource × action matrix is enforced by row-level security and guard triggers in the database;
+system configuration, the permission matrix and the Prompt Engineer Workspace are locked to
+SUPER ADMIN, and only a SUPER ADMIN manages administrator accounts. The full model, the
+standard matrix and the upgrade from v5: **`docs/RBAC.md`**.
 
 ## Authentication — closed registration
 
 There is no public sign-up. The sign-in form is the only authentication feature visible to the public.
 
-- **First run.** On an empty project the sign-in screen shows "Set up the administrator" once. That account is created through GoTrue sign-up and the database trigger makes it the Administrator because it is the first profile. This is the only sign-up the trigger ever accepts.
-- **Every other account** is created by an administrator: Staff → Create a profile (staff), or Cases → Create student (students). With the `account.write` permission the administrator issues a temporary password at the same time. The browser calls the `admin-users` Edge Function, which verifies the caller is an active Administrator and creates the identity with the service role key on the server. The service role key never reaches the browser.
-- **Anything else** — any public sign-up once the project has an administrator — is refused inside the database transaction by `handle_new_auth_user()`, so no orphan identity is created even if sign-ups are left enabled in the Supabase dashboard. A public sign-up never claims a profile, not even by matching email: only identities created by the Edge Function (stamped in `app_metadata`) are linked. Disable "Allow new users to sign up" in the dashboard after bootstrap for defence in depth.
-- **Passwords** must be at least 10 characters and mix three character classes; the rule is enforced in the browser and again in the Edge Function.
+- **First run.** On an empty project the sign-in screen shows "Set up the administrator" once. That account is created through GoTrue sign-up and, if its email is on a Group IT domain, the database trigger makes it the first SUPER ADMIN. This is the only sign-up the trigger ever accepts.
+- **Every other account** is created by an administrator: Staff → Create a profile (staff), or Cases → Create student (students). With the `account.write` permission the administrator issues a temporary password at the same time. The browser calls lpl-api's `admin-users` endpoint, which verifies the caller may manage that account (only a SUPER ADMIN manages administrators) and creates the identity with the service role key on the server. The service role key never reaches the browser.
+- **Anything else** — any public sign-up once the project has an administrator — is refused inside the database transaction by `handle_new_auth_user()`, so no orphan identity is created even if sign-ups are left enabled in the Supabase dashboard. A public sign-up never claims a profile, not even by matching email: only identities created through `admin-users` (stamped in `app_metadata`) are linked. Disable "Allow new users to sign up" in the dashboard after bootstrap for defence in depth.
+- **Passwords** must be at least 10 characters and mix three character classes; the rule is enforced in the browser and again by lpl-api.
 - **Password resets** are administrator actions (Staff → Set temporary password). There is deliberately no self-service reset on the public screen.
-- **Deactivation** removes the role from any live token (policies read `active`) and bans the identity through the Edge Function.
+- **Deactivation** removes the role from any live token (policies read `active`) and bans the identity through lpl-api.
 
 ## Connecting a server
 
-Without a server the application stores everything in the browser, which is fine for a walkthrough and not fine for real student records.
+A production build always talks to one lpl-api, fixed at build time; it never stores records
+in the browser.
 
 1. Create a Supabase project. **Choose the region closest to Colombo (Singapore, `ap-southeast-1`).**
-2. Run `supabase/schema.sql` in the project's SQL editor.
-3. Deploy the Edge Function: `supabase functions deploy admin-users` (the platform injects `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`; no other secret is needed).
-4. For the first administrator, either turn off email confirmation under Authentication → Providers for the set-up moment, or confirm the email from the inbox before signing in.
-5. In the application: Settings → Server connection → paste the project URL and the **anon** key → Test connection → Connect.
-6. Sign out, then complete "Set up the administrator" on the sign-in screen.
-7. Add the project to Data protection → Standing processors.
+2. Apply the schema: `supabase/schema.sql` in the SQL editor for a new project, or the
+   **Migrate database** workflow for an existing one (`docs/OPERATIONS.md`).
+3. Deploy lpl-api (`server/`, configured through its environment, `server/.env.example`). It
+   holds the service role key; the browser never does.
+4. Build the web application for it: `VITE_API_URL` (the lpl-api origin, https) and
+   `VITE_API_ANON_KEY` (the public anon key). CI does this from repository variables; the build
+   refuses a service-role key and a non-https API.
+5. For the first account, turn off email confirmation under Authentication → Providers for the
+   set-up moment (or confirm the email first), then complete "Set up the administrator" with a
+   Group IT address: it becomes the first SUPER ADMIN.
+6. Disable "Allow new users to sign up" under Authentication → Providers → Email. The database
+   already refuses public sign-ups; this is the second lock.
+7. Record the Supabase project and the lpl-api host under Data protection → Standing processors.
 
-Alternatively, set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` at build time (see `.env.example`) to bake the connection in. A connection entered in Settings overrides the build-time one.
-
-**Go service instead of Supabase's request path.** `server/` holds `lpl-api`, which speaks the same contract this file uses, so the project URL entered in Settings (or baked in at build time) can point at it. The built file's Content-Security-Policy only admits `*.supabase.co`; when the API lives elsewhere, build with `LPL_CONNECT_SRC="https://api.example.com" npm run build` so that origin is admitted too. See `server/README.md` and `server/docs/CUTOVER.md`.
-
-**Never put the `service_role` key in the browser.** Only the anon key belongs here; it grants nothing on its own.
-
-After the first connection, disable "Allow new users to sign up" under Authentication → Providers → Email. The database already refuses public sign-ups; this is the second lock.
+Development builds (`npm run dev`) can instead be pointed at a server under Settings → Server
+connection, or run in browser storage for a walkthrough.
 
 ## Deployment
 
-The build is one HTML file, so it can be hosted anywhere static files are served. Two arrangements are in use:
-
-- **Test site (GitHub Pages).** `.github/workflows/pages.yml` runs on every push to `main`: `npm ci`, then `npm run build` (typecheck and AAA contrast check first, so a failure blocks the deploy), then publishes `dist/` to Pages. Enable once per repository under Settings → Pages → Source: GitHub Actions. The current test site is https://bhanumendis.github.io/LPL-PMS/ from the `bhanumendis/LPL-PMS` repository. Without a connected server it runs in browser-storage mode; connect a Supabase project from Settings to test the real backend on the same URL.
-- **Deliverable.** `dist/LPL_Placement_Management_System.html` is the file handed over; it carries the version banner, the ownership notice and the Content-Security-Policy described below.
-
-Remotes on the development machine: `personal` → `bhanumendis/LPL-PMS` (test site), `origin` → the Lyceum organisation repository.
+The web application is one HTML file plus `sw.js`, built for exactly one API origin; lpl-api
+is a container. `.github/workflows/ci.yml` deploys both from `main` after every gate passes
+(lpl-api to GHCR and the `production` environment with an automatic rollback on a failed smoke
+test, the web application to GitHub Pages), `rollback.yml` restores any commit that passed CI,
+and `migrate.yml` applies database migrations behind an approval. Setup, variables and secrets:
+**`docs/OPERATIONS.md`**. `dist/LPL_Placement_Management_System.html` is the same page as a
+single-file deliverable.
 
 ## Hardening in the built file
 
-- **Content-Security-Policy** meta injected by `scripts/finalize.mjs`: every inline script is allowed by SHA-256 hash and nothing else may execute; styles are inline (React sets style attributes); images and fonts are `data:` URIs; network access is limited to `*.supabase.co` / `*.supabase.in`; `base-uri` and `form-action` are `none`.
+- **Content-Security-Policy** meta injected by `scripts/finalize.mjs`: every inline script is allowed by SHA-256 hash and nothing else may execute; styles are inline (React sets style attributes); images and fonts are `data:` URIs; network access is limited to exactly the API origin the build was made for (plus `LPL_CONNECT_SRC`); `base-uri` and `form-action` are `none`.
 - **Error boundary** around the application (`src/main.tsx`): a render error in one view shows a recovery panel with "Back to start" and "Reload" instead of a blank page.
-- **Polling** asks `workspace_version()` (one row, computed under the caller's own row-level security) before downloading anything, and an unchanged poll re-renders nothing.
+- **Polling** reads four change counters (`change_versions()`) and re-reads only what moved; lists are paged from the server, never downloaded whole.
 - **Version** comes from `package.json` at build time (`__APP_VERSION__`) and is shown on the sign-in screen.
 
 ## Ownership notice
 
-The copyright is recorded in every layer so that anyone inspecting the product, the source or the database sees it:
+The attribution is recorded in every layer so that anyone inspecting the product, the source or the database sees it: "Developed by Bhanu Mendis - Group IT" on the frontend and "Copyright © Bhanu Mendis - LGH IT" on the backend. `node scripts/check-attribution.mjs` (run in CI) fails a source file that lacks its form, and any file that still carries the old reserved-rights line.
 
 | Where | How |
 |---|---|
-| Every source file (`.ts`, `.tsx`, `.css`, `.sql`, `.mjs`, `.yml`) | Header comment |
+| Every source file (`.ts`, `.tsx`, `.css`, `.sql`, `.go`, `.sh`, `.mjs`, `.yml`) | Header comment, frontend or backend form |
 | Built HTML | Banner comment at the top, `<meta name="author">` and `<meta name="copyright">` |
 | Minified JavaScript inside the built HTML | `/*! @license */` block preserved by the bundler (`esbuild.legalComments: "inline"`) |
 | Running application | `window.__LPL_PMS__` object and a console notice on start |
 | Database | `COMMENT ON TABLE` on every table in `supabase/schema.sql`, visible in the Table Editor, `psql \d+` and `pg_dump` |
-| Repository | `LICENSE` (all rights reserved) and `package.json` `author` / `license: UNLICENSED` |
+| Repository | `LICENSE` and `package.json` `author` / `license: UNLICENSED` |
 
 ## The nine stages
 
@@ -207,7 +179,7 @@ The 31 steps remain the system of record, but nobody works with 31 items on scre
 
 ## Prompt Engineer Workspace
 
-An isolated, Administrator-only area for authoring, previewing and versioning prompt templates (`{{variable}}` placeholders, sample inputs, compiled preview, version history, import and export). Nothing in it calls any model or external API from the browser and no student data is sent anywhere. Templates are stored in the `prompts` table under Administrator-only policies.
+An isolated, SUPER ADMIN-only area for authoring, previewing and versioning prompt templates (`{{variable}}` placeholders, sample inputs, compiled preview, version history, import and export). Nothing in it calls any model or external API from the browser and no student data is sent anywhere. Templates are stored in the `prompts` table under SUPER ADMIN-only policies.
 
 ## Data protection
 
@@ -219,21 +191,27 @@ Closes absences 2 and 3 of §10 of the process document and feeds the three comp
 
 ## Accessibility
 
-WCAG 2.1 AAA target. Contrast is computed (`npm run contrast`); the nine-stage accordion uses `button[aria-expanded][aria-controls]` headers with `role="region"` panels and arrow-key movement; dialogs are `role="dialog"` + `aria-modal` with focus trapped, a fixed header, an internally scrolling body and a sticky action row so long forms are completable on any screen height; every chart prints its values as text; Windows forced-colours mode has real borders on every surface.
+WCAG 2.2 AA is verified in a real browser on every change: `npm run test:ui` runs axe (colour
+contrast included) over every role's pages in the production bundle at 1440×900, 1280×800,
+1024×768, 768×1024, 390×844, 375×812 and 360×800, plus dark at 1440, and fails on sideways
+scrolling or console errors. Token contrast is held at AAA (`npm run contrast`). Dialogs trap
+focus, every chart prints its values as text, motion respects reduced-motion, and Windows
+forced-colours mode has real borders on every surface.
 
-Still needing a real machine and a real person: a screen-reader pass (NVDA or VoiceOver) through the counsellor "complete a step" flow and the student profile form.
+Still needing a real person: a screen-reader pass (NVDA or VoiceOver) through the counsellor
+"complete a step" flow and the student profile form.
 
 ## Security note
 
-With no server, passwords are hashed client-side (SHA-256) and stored with the workspace. That is acceptable for a controlled walkthrough and **not** acceptable for anything internet-facing. Connect a server before real student data goes in.
+The production build always talks to lpl-api and refuses to fall back to browser storage.
+Browser-storage mode (with client-side SHA-256 password hashing) exists only in development
+builds, for walkthroughs, never for real student data. Controls and what operators own:
+**`docs/SECURITY.md`**.
 
-## Status and outstanding checks
+## Status
 
-v5.0.0 (13 September 2026, branch `redesign/v5`): typecheck, eslint, 111 vitest tests including the axe suite, and every token pair at AAA in both themes, all green; `server/` Go tests green. Checked in a browser at 1440, 768 and 375 px for the administrator, Team Leader and counsellor: no page scrolls sideways, no section fails to draw. The single-file build is 747 KB, above the 700 KB budget the redesign set; the growth is the notification, audit, rail and motion code, not assets. The acceptance record is `docs/superpowers/plans/2026-09-12-acceptance.md`.
-
-Still to be done by hand before real student data goes in:
-
-1. Exercise the Supabase path end to end on a real project (schema or migration, both Edge Functions, bootstrap, create profile with sign-in, complete a step, Team Leader decision, notification fan-out, `emit_sla_notifications` on a schedule, audit explorer paging, a push to a real device). The server code is consistent and unit-tested but has not yet run against a live project.
-2. A screen-reader pass (NVDA or VoiceOver) through "complete a step", the student rail quick view and the student profile form.
-3. Windows forced-colours mode on a real machine.
-4. Workspace backups taken while connected to a server no longer include audit rows; export the audit log from the Audit log page instead.
+v6.0.0 (25 September 2026). The release report (production readiness, residual risks and what
+remains to be done by people) is in the pull request that introduced v6; `docs/OPERATIONS.md`
+has the release checklist. Not in this release: storage of uploaded document files (the system
+records each document's details and review, not the file), and a screen-reader pass by a
+person.

@@ -1,15 +1,12 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
- * Commands for the palette: destinations, cases the user may read, staff, and a few actions.
- * Built from the loaded snapshot; nothing is fetched.
+ * Commands for the palette: destinations, staff, and a few actions, from the session. Cases are
+ * searched on the server as the query is typed (CommandPalette), never enumerated here.
  */
 import type { SessionCtx } from "@/App";
-import { canReadCase, caseScopeOf, ROLE_LABEL } from "@/lib/rbac";
-import { caseDestination } from "@/lib/logic";
-import type { CaseSignals } from "@/lib/signals";
+import { caseScopeOf, ROLE_LABEL } from "@/lib/rbac";
 import type { Destination } from "./nav";
 
 export type CommandGroup = "Go to" | "Cases" | "People" | "Actions";
@@ -17,8 +14,8 @@ export interface Command { id: string; group: CommandGroup; label: string; hint?
 
 const GROUP_ORDER: Record<CommandGroup, number> = { "Go to": 0, Actions: 1, Cases: 2, People: 3 };
 
-export function buildCommands(s: SessionCtx, primary: Destination[], more: Destination | null, signals: Map<string, CaseSignals>): Command[] {
-  const { user, go, can, snap, cases, users, toggleTheme, theme, signOut } = s;
+export function buildCommands(s: SessionCtx, primary: Destination[], more: Destination | null): Command[] {
+  const { user, go, can, snap, users, toggleTheme, theme, signOut } = s;
   if (!user) return [];
   const out: Command[] = [];
   for (const d of primary) {
@@ -30,11 +27,6 @@ export function buildCommands(s: SessionCtx, primary: Destination[], more: Desti
   const scope = caseScopeOf(snap.org.config, user.role);
   if (user.role !== "student") {
     if (can("case.write") && (scope === "all" || scope === "assigned")) out.push({ id: "act:create", group: "Actions", label: "Create student", hint: "Opens a case", keywords: "new case enquiry", run: () => go({ page: "cases", id: "new" }) });
-    for (const c of Object.values(cases)) {
-      if (!canReadCase(snap.org.config, user, c)) continue;
-      const sig = signals.get(c.id);
-      out.push({ id: `case:${c.id}`, group: "Cases", label: `${c.ref} · ${c.student.name}`, hint: sig ? `Stage ${sig.stage.n} · ${caseDestination(c)}` : caseDestination(c), keywords: `${c.student.email} ${caseDestination(c)}`, run: () => go({ page: "case", caseId: c.id }) });
-    }
     if (can("staff.read")) {
       for (const u of Object.values(users)) {
         if (u.role === "student" || !u.active) continue;

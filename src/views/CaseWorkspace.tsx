@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  */
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowLeft, Check, Lock, Minus, Download, ChevronDown, ChevronUp, Mail, Phone, ShieldCheck, FileText, RotateCcw, GraduationCap, Flag, PauseCircle, CalendarClock, Play } from "lucide-react";
@@ -10,7 +9,8 @@ import { store } from "@/lib/store";
 import { canReadCase, canWorkCase, caseScopeOf } from "@/lib/rbac";
 import { PIPELINE, STEP_BY_N, EXIT_CODES, pipelineOfStep } from "@/lib/spine";
 import { derivedStatus, currentStep, pipelineProgress, slaFlags, latestGate, fmtDateTime, fmtDate, fmtMonth, changeStatus, pendingReviewCount, stepState, caseProgress, caseDestination, caseProgramme, caseTransfers, retentionDue, retentionState, RETENTION_LABEL, daysUntil, exitStageLabel, redactSensitive } from "@/lib/logic";
-import { Pill, statusTone, STATUS_LABEL, Modal, useToast, Avatar, Notice, ValueDisplay, isVisible, Tabs, TabPanel, TextArea, SelectField, Field, SeverityChip } from "@/lib/ui";
+import { Pill, statusTone, STATUS_LABEL, Modal, useToast, Avatar, Notice, ValueDisplay, isVisible, Tabs, TabPanel, TextArea, SelectField, Field, SeverityChip, PageSkeleton } from "@/lib/ui";
+import { useCase } from "@/lib/useRead";
 import { Ring, StageTrack } from "@/lib/charts";
 import { StepPanel } from "@/views/StepPanel";
 import { DocumentChecklist } from "@/views/Documents";
@@ -25,7 +25,25 @@ type Tab = "step" | "documents" | "timeline" | "profile" | "dp";
 /** Pipeline stage id that presents a step; falls back to the first stage for an unknown step number from the URL. */
 const stageIdOf = (n: number): string => (STEP_BY_N[n] ? pipelineOfStep(n) : PIPELINE[0]).id;
 
+/**
+ * A case opened from a list, a notification or a link. On a server the document is fetched
+ * when it is opened (lists carry summaries only) and watched while it stays open.
+ */
 export function CaseWorkspace({ caseId }: { caseId: string }) {
+  const { cases, go } = useSession();
+  const { c, loading, error } = useCase(caseId, cases);
+  if (c) return <CaseWorkspaceView caseId={caseId} />;
+  if (loading) return <PageSkeleton variant="workspace" label="Opening case" />;
+  return (
+    <div className="panel"><div className="panel-b">
+      <h2>This case is not available</h2>
+      <p className="muted mt1">{error ?? "It does not exist, or it is not in your caseload."}</p>
+      <button type="button" className="btn btn-secondary mt3" onClick={() => go({ page: "cases" })}>Back to cases</button>
+    </div></div>
+  );
+}
+
+function CaseWorkspaceView({ caseId }: { caseId: string }) {
   const { cases, users, user, can, snap, go, route, audit } = useSession();
   const toast = useToast();
   const c = cases[caseId];
@@ -179,7 +197,7 @@ export function CaseWorkspace({ caseId }: { caseId: string }) {
               <h1>{c.student.name}</h1>
               <Pill tone={statusTone(c.status)}>{STATUS_LABEL[c.status]}</Pill>
             </div>
-            <p className="ui small muted mt1">{c.ref} · opened {fmtDate(c.createdAt)} · {caseDestination(c)} · {caseProgramme(c)}</p>
+            <p className="ui small muted mt1">{[c.ref, `opened ${fmtDate(c.createdAt)}`, caseDestination(c), caseProgramme(c)].filter((x) => x !== "—").join(" · ")}</p>
             <p className="case-contact ui small mt1">
               <a href={`mailto:${c.student.email}`}><Mail aria-hidden />{c.student.email}</a>
               <a href={`tel:${c.student.phone}`}><Phone aria-hidden />{c.student.phone}</a>

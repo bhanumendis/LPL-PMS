@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 //
 // Package config reads the service configuration from the environment and fails fast on
 // anything missing. There is no configuration file: the binary is meant to run in a
@@ -16,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"lpl-api/internal/webpush"
 )
 
 // Config is the complete runtime configuration of lpl-api.
@@ -50,9 +51,48 @@ type Config struct {
 	RequestTimeout time.Duration
 	// MaxBodyBytes bounds request bodies (default 10 MiB; a restore chunk is far smaller).
 	MaxBodyBytes int64
-	// CORSAllowOrigin is returned as Access-Control-Allow-Origin (default "*", as Supabase).
-	CORSAllowOrigin string
+	// Env is "production" (the default) or "development". Production refuses settings that
+	// are only safe on a laptop, such as a wildcard CORS origin.
+	Env string
+	// CORSAllowOrigins are the browser origins allowed to call the API. A request from any
+	// other origin gets no CORS headers, so the browser refuses to read the response.
+	// "*" is accepted in development only.
+	CORSAllowOrigins []string
+	// TrustedProxyHops is the number of reverse proxies in front of the service that append
+	// to X-Forwarded-For. 0 (the default) uses the TCP peer address, which cannot be forged.
+	TrustedProxyHops int
+	// Per-client-IP request budgets per minute: password sign-in and sign-up (brute force),
+	// account administration, and the data API. 0 disables a limit.
+	RateAuthPerMinute  int
+	RateAdminPerMinute int
+	RateAPIPerMinute   int
+	// HSTS adds Strict-Transport-Security (default on in production).
+	HSTS bool
+
+	// Background work (internal/workers). Workers switches every job off (WORKERS=false),
+	// for a replica that should only serve requests; each interval set to 0 switches one off.
+	Workers           bool
+	PushInterval      time.Duration
+	SLAInterval       time.Duration
+	DashboardInterval time.Duration
+	// RestampInterval: how soon a case order stamp is retaken after its window closes (the
+	// date-only deadlines of every case turn together at 00:00 UTC).
+	RestampInterval time.Duration
+	PruneInterval   time.Duration
+	// NotificationRetentionDays is how long notifications are kept (default 90, at least 7).
+	NotificationRetentionDays int
+	// VAPID key pair and contact for Web Push (all three, or none: push delivery off).
+	// VAPIDPrivateKey is a secret; the public key is also entered in Settings.
+	VAPIDPublicKey  string
+	VAPIDPrivateKey string
+	VAPIDSubject    string
+	// PushHosts are the push services the dispatcher may contact (PUSH_ENDPOINT_HOSTS,
+	// comma-separated; default webpush.DefaultHosts).
+	PushHosts []string
 }
+
+// Production reports whether the service runs with production safeguards.
+func (c Config) Production() bool { return c.Env != "development" }
 
 var roleName = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
@@ -107,16 +147,26 @@ func FromEnv(get func(string) string) (Config, error) {
 	}
 
 	c := Config{
-		ListenAddr:      str("LISTEN_ADDR", ":8080"),
-		DatabaseURL:     str("DATABASE_URL", ""),
-		DBSystemRole:    str("DB_SYSTEM_ROLE", "service_role"),
-		GoTrueURL:       strings.TrimRight(str("GOTRUE_URL", ""), "/"),
-		AnonKey:         str("ANON_KEY", ""),
-		ServiceRoleKey:  str("SERVICE_ROLE_KEY", ""),
-		JWTSecret:       get("JWT_SECRET"), // taken verbatim: a secret may legitimately end in whitespace
-		JWKSURL:         str("JWKS_URL", ""),
-		CORSAllowOrigin: str("CORS_ALLOW_ORIGIN", "*"),
+		ListenAddr:     str("LISTEN_ADDR", ":8080"),
+		DatabaseURL:    str("DATABASE_URL", ""),
+		DBSystemRole:   str("DB_SYSTEM_ROLE", "service_role"),
+		GoTrueURL:      strings.TrimRight(str("GOTRUE_URL", ""), "/"),
+		AnonKey:        str("ANON_KEY", ""),
+		ServiceRoleKey: str("SERVICE_ROLE_KEY", ""),
+		JWTSecret:      get("JWT_SECRET"), // taken verbatim: a secret may legitimately end in whitespace
+		JWKSURL:        str("JWKS_URL", ""),
+		Env:            strings.ToLower(str("APP_ENV", "production")),
 	}
+	// CORS_ALLOW_ORIGINS is a comma-separated list; CORS_ALLOW_ORIGIN is the v5 spelling.
+	for _, o := range strings.Split(str("CORS_ALLOW_ORIGINS", str("CORS_ALLOW_ORIGIN", "")), ",") {
+		if o = strings.TrimRight(strings.TrimSpace(o), "/"); o != "" {
+			c.CORSAllowOrigins = append(c.CORSAllowOrigins, o)
+		}
+	}
+	c.TrustedProxyHops = int(intv("TRUSTED_PROXY_HOPS", 0))
+	c.RateAuthPerMinute = int(intv("RATE_LIMIT_AUTH_PER_MINUTE", 10))
+	c.RateAdminPerMinute = int(intv("RATE_LIMIT_ADMIN_PER_MINUTE", 30))
+	c.RateAPIPerMinute = int(intv("RATE_LIMIT_API_PER_MINUTE", 600))
 	c.DBMaxConns = int32(intv("DB_MAX_CONNS", 8))
 	c.DBSimpleProtocol = boolv("DB_SIMPLE_PROTOCOL", defaultSimpleProtocol(c.DatabaseURL))
 	c.JWTLeeway = durv("JWT_LEEWAY", 0)
@@ -147,6 +197,67 @@ func FromEnv(get func(string) string) (Config, error) {
 	}
 	if c.DBMaxConns == 0 {
 		c.DBMaxConns = 8
+	}
+	if c.Env != "production" && c.Env != "development" {
+		errs = append(errs, fmt.Errorf("APP_ENV must be production or development, got %q", c.Env))
+	}
+	c.HSTS = boolv("HSTS", c.Production())
+
+	c.Workers = boolv("WORKERS", true)
+	c.PushInterval = durv("PUSH_INTERVAL", 10*time.Second)
+	c.SLAInterval = durv("SLA_REMINDER_INTERVAL", 15*time.Minute)
+	c.DashboardInterval = durv("DASHBOARD_REFRESH_INTERVAL", time.Minute)
+	c.RestampInterval = durv("RESTAMP_INTERVAL", 10*time.Second)
+	c.PruneInterval = durv("PRUNE_INTERVAL", 6*time.Hour)
+	c.NotificationRetentionDays = int(intv("NOTIFICATION_RETENTION_DAYS", 90))
+	if c.NotificationRetentionDays < 7 {
+		errs = append(errs, fmt.Errorf("NOTIFICATION_RETENTION_DAYS must be at least 7, got %d", c.NotificationRetentionDays))
+	}
+	for name, d := range map[string]time.Duration{"PUSH_INTERVAL": c.PushInterval, "SLA_REMINDER_INTERVAL": c.SLAInterval, "DASHBOARD_REFRESH_INTERVAL": c.DashboardInterval, "RESTAMP_INTERVAL": c.RestampInterval, "PRUNE_INTERVAL": c.PruneInterval} {
+		if d > 0 && d < time.Second {
+			errs = append(errs, fmt.Errorf("%s must be 0 (off) or at least 1s, got %s", name, d))
+		}
+	}
+	c.VAPIDPublicKey = str("VAPID_PUBLIC_KEY", "")
+	c.VAPIDPrivateKey = strings.TrimSpace(get("VAPID_PRIVATE_KEY"))
+	c.VAPIDSubject = str("VAPID_SUBJECT", "")
+	if c.VAPIDPublicKey != "" || c.VAPIDPrivateKey != "" || c.VAPIDSubject != "" {
+		if _, err := webpush.ParseVAPID(c.VAPIDPublicKey, c.VAPIDPrivateKey, c.VAPIDSubject); err != nil {
+			errs = append(errs, fmt.Errorf("VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY and VAPID_SUBJECT must be set together for Web Push: %w", err))
+		}
+	}
+	for _, h := range strings.Split(str("PUSH_ENDPOINT_HOSTS", ""), ",") {
+		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
+			if strings.ContainsAny(h, "/:@ ") || !strings.Contains(h, ".") {
+				errs = append(errs, fmt.Errorf("PUSH_ENDPOINT_HOSTS entry %q is not a host name such as fcm.googleapis.com", h))
+			}
+			c.PushHosts = append(c.PushHosts, h)
+		}
+	}
+	if len(c.CORSAllowOrigins) == 0 {
+		if c.Production() {
+			errs = append(errs, errors.New("CORS_ALLOW_ORIGINS is required in production: the origin(s) the web application is served from"))
+		} else {
+			c.CORSAllowOrigins = []string{"*"}
+		}
+	}
+	for _, o := range c.CORSAllowOrigins {
+		switch {
+		case o == "*":
+			if c.Production() {
+				errs = append(errs, errors.New(`CORS_ALLOW_ORIGINS may not be "*" in production`))
+			}
+		case o == "null":
+			if c.Production() {
+				errs = append(errs, errors.New(`CORS_ALLOW_ORIGINS may not admit "null" (files opened from disk) in production`))
+			}
+		default:
+			if u, err := url.Parse(o); err != nil || u.Scheme == "" || u.Host == "" || u.Path != "" {
+				errs = append(errs, fmt.Errorf("CORS_ALLOW_ORIGINS entry %q is not an origin such as https://pms.example.lk", o))
+			} else if c.Production() && u.Scheme != "https" {
+				errs = append(errs, fmt.Errorf("CORS_ALLOW_ORIGINS entry %q must use https in production", o))
+			}
+		}
 	}
 	return c, errors.Join(errs...)
 }

@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * One shell for every role: the utility bar with the floating dock, the routed page, the
  * counsellor rail (Stage 5), the mobile tab bar, and the layers (notification center,
@@ -12,12 +11,14 @@ import { LogOut, Moon, Sun } from "lucide-react";
 import { useSession, useDocumentTitle } from "@/App";
 import { caseScopeOf } from "@/lib/rbac";
 import { BP, useMediaQuery } from "@/lib/hooks";
-import { countBadges, useCaseSignals } from "@/lib/signals";
+import { badgesOf } from "@/lib/signals";
+import { useCaseCount, useDashboard } from "@/lib/useRead";
 import { RegionBoundary } from "@/lib/ui/boundary";
 import { activeDestination, destinationsFor, moreDestination, pageTitle, type NavInput } from "./nav";
 import { TopBar } from "./TopBar";
 import { MobileTabBar } from "./MobileTabBar";
 import { renderPage } from "./pages";
+import { SectionNav } from "./SectionNav";
 import { buildCommands } from "./commands";
 import { CommandPalette, SearchButton } from "./CommandPalette";
 import { NotificationBell } from "@/notifications/NotificationBell";
@@ -31,11 +32,11 @@ import { StudentRail, railEnabled, type RailMode } from "./rail/StudentRail";
 
 export function AppShell() {
   const s = useSession();
-  const { user, route, go, can, isAdmin, snap, signOut, theme, toggleTheme } = s;
+  const { user, route, go, can, isSuperAdmin, snap, signOut, theme, toggleTheme } = s;
   const role = user?.role ?? "student";
   const scope = user ? caseScopeOf(snap.org.config, user.role) : "none";
   const seesAll = scope === "all";
-  const navInput = useMemo<NavInput>(() => ({ role, can, isAdmin, seesAll, noCases: scope === "none" }), [role, can, isAdmin, seesAll, scope]);
+  const navInput = useMemo<NavInput>(() => ({ role, can, isSuperAdmin, seesAll, noCases: scope === "none" }), [role, can, isSuperAdmin, seesAll, scope]);
   const { primary, more } = useMemo(() => destinationsFor(navInput), [navInput]);
   const moreDest = useMemo(() => moreDestination(more), [more]);
   const page = route.page === "home" ? "" : route.page;
@@ -47,8 +48,11 @@ export function AppShell() {
   const seenPage = entry.key === pageKey ? entry.seen : visited.includes(pageKey);
   useEffect(() => { if (!visited.includes(pageKey)) setVisited((v) => (v.includes(pageKey) ? v : [...v, pageKey])); }, [pageKey, visited, setVisited]);
   const activeId = activeDestination(page, primary) ?? (moreDest && moreDest.pages.includes(page) ? "more" : undefined);
-  const signals = useCaseSignals();
-  const badges = useMemo(() => countBadges(signals.values(), { mineId: seesAll ? undefined : user?.id }), [signals, seesAll, user?.id]);
+  const activeDest = primary.find((d) => d.id === activeId);
+  // Badges come from the dashboard: every case for a role that sees them all (one shared,
+  // cached answer on a server), otherwise the caller's own caseload.
+  const dashboard = useDashboard(!!user && user.role !== "student" && scope !== "none");
+  const badges = useMemo(() => badgesOf(dashboard.data), [dashboard.data]);
   useDocumentTitle(pageTitle(page, navInput));
 
   const compact = useMediaQuery(BP.compact);
@@ -60,11 +64,12 @@ export function AppShell() {
   const railOn = railEnabled(snap.org.config, user);
   const [railOpen, setRailOpen] = useState(false);
   const railMode: RailMode = mobile ? "sheet" : "strip";
-  const attentionCount = useMemo(() => (user ? [...signals.values()].filter((x) => x.counsellorId === user.id && x.status === "open" && x.severity !== "none").length : 0), [signals, user]);
+  const attention = useCaseCount(railOn && user ? { counsellor: user.id, status: ["open"], attention: true } : null, 100);
+  const attentionCount = attention.data ?? 0;
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const searchRef = useRef<HTMLButtonElement>(null);
-  const commands = useMemo(() => buildCommands(s, primary, moreDest, signals), [s, primary, moreDest, signals]);
+  const commands = useMemo(() => buildCommands(s, primary, moreDest), [s, primary, moreDest]);
   const notifications = useNotifications();
   const [centerOpen, setCenterOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -112,6 +117,7 @@ export function AppShell() {
         profileExtra={<button type="button" className="menu-item" onClick={() => setSettingsOpen(true)}><BellRing aria-hidden />Notification settings</button>} />
       <div className={`frame ${railOn && !mobile ? "has-rail" : ""}`}>
         <main className="page" id="main" tabIndex={-1}>
+          {activeDest && <SectionNav dest={activeDest} activePage={page} onNavigate={navigate} />}
           <RegionBoundary label="page">
             <div key={page + (route.caseId ?? "")} className={`page-enter ${seenPage ? "seen" : ""}`}>{renderPage(route, s)}</div>
           </RegionBoundary>
@@ -123,7 +129,8 @@ export function AppShell() {
         )}
       </div>
       {tablet && <MobileTabBar primary={primary} more={moreDest} activeId={activeId} activePage={page} badges={badges} onNavigate={navigate} moreExtra={moreExtra} extraTab={studentsTab} />}
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} anchorRef={searchRef} />
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} anchorRef={searchRef}
+        searchCases={role !== "student" && scope !== "none"} onOpenCase={(caseId) => go({ page: "case", caseId })} />
       <NotificationCenter open={centerOpen} onClose={() => setCenterOpen(false)} anchorRef={bellRef} model={notifications} onSettings={() => { setCenterOpen(false); setSettingsOpen(true); }} />
       <Layer open={settingsOpen} onClose={() => setSettingsOpen(false)} anchorRef={bellRef} label="Notification settings" width={440}>
         <div className="layer-h"><h2>Notification settings</h2></div>

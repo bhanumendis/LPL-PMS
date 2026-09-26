@@ -1,10 +1,10 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Performance guards: a quiet poll re-renders nothing, the workspace load no longer carries
- * the audit log, and blur stays on the float tier.
+ * the audit log, blur stays on the float tier, and motion stays on the compositor and the
+ * token scale.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, render } from "@testing-library/react";
@@ -12,6 +12,7 @@ import baseCss from "@/styles/base.css?raw";
 import componentsCss from "@/styles/components.css?raw";
 import shellCss from "@/styles/shell.css?raw";
 import pagesCss from "@/styles/pages.css?raw";
+import tokensCss from "@/styles/tokens.css?raw";
 import { store } from "@/lib/store";
 import { useStoreSelect } from "@/lib/useStore";
 import { SupabaseBackend } from "@/lib/server";
@@ -33,26 +34,59 @@ describe("performance guards", () => {
     expect(renders).toBe(before);
   });
 
-  it("the server workspace load reads no audit rows", async () => {
+  it("the server workspace load reads nothing that grows with the organisation", async () => {
     const urls: string[] = [];
+    const token = `h.${btoa(JSON.stringify({ sub: "auth-1" }))}.s`;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       urls.push(url);
-      if (url.includes("/auth/v1/token")) return json({ access_token: "t", refresh_token: "r", expires_in: 3600, user: { id: "auth-1" } });
+      if (url.includes("/auth/v1/token")) return json({ access_token: token, refresh_token: "r", expires_in: 3600, user: { id: "auth-1" } });
       if (url.includes("/rest/v1/org_config")) return json([{ id: "org", config: {} }]);
+      if (url.includes("auth_id=eq.auth-1")) return json([{ id: "u1", auth_id: "auth-1", email: "a@x.lk", name: "A", role: "admin", active: true, created_at: "2026-01-01T00:00:00Z" }]);
       return json([]);
     });
     const backend = new SupabaseBackend({ url: "https://example.supabase.co", anonKey: "anon" });
     await backend.signIn("a@example.com", "pw");
     urls.length = 0;
     await backend.load();
-    expect(urls.some((u) => u.includes("/rest/v1/audit"))).toBe(false);
-    expect(urls.filter((u) => u.includes("/rest/v1/")).length).toBe(4);
+    const rest = urls.filter((u) => u.includes("/rest/v1/"));
+    // Configuration, the staff directory, the caller's own profile, prompts. No audit rows,
+    // no case documents and no student profiles for a staff member.
+    expect(rest).toHaveLength(4);
+    expect(rest.some((u) => u.includes("/rest/v1/audit") || u.includes("/rest/v1/cases"))).toBe(false);
+    expect(rest.filter((u) => u.includes("/rest/v1/app_users")).every((u) => u.includes("role=neq.student") || u.includes("auth_id=eq."))).toBe(true);
   });
 
   it("blur is declared only on the float tier (at most six rules across the stylesheets)", () => {
     const files = [baseCss, componentsCss, shellCss, pagesCss];
     const blurs = files.flatMap((css) => css.match(/(?<!-webkit-)backdrop-filter:(?!\s*none)[^;]+;/g) ?? []);
     expect(blurs.length).toBeLessThanOrEqual(6);
+  });
+
+  it("motion animates only transform and opacity, on the token curves, and never `all`", () => {
+    const files = [baseCss, componentsCss, shellCss, pagesCss];
+    const keyframes = files.flatMap((css) => css.match(/@keyframes [\w-]+ \{.*\}/g) ?? []);
+    expect(keyframes.length).toBeGreaterThan(10);
+    for (const k of keyframes) {
+      const props = [...k.replace(/^@keyframes [\w-]+ \{/, "").matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1]);
+      expect(props.filter((p) => p !== "transform" && p !== "opacity"), k).toEqual([]);
+    }
+    for (const css of files) {
+      expect(css).not.toMatch(/transition:\s*all\b/);
+      // Curves are named in tokens.css; a raw one elsewhere is a curve nobody else uses.
+      expect(css).not.toMatch(/cubic-bezier\(/);
+    }
+    expect(tokensCss).toMatch(/--ease-out:/);
+    // Endless animations pause in a background tab.
+    expect(baseCss).toMatch(/html\[data-hidden\] \*[^{]*\{ animation-play-state: paused !important; \}/);
+  });
+
+  it("only a loading indicator animates without end (an idle page draws no frames)", () => {
+    // An endless animation under the glass surfaces makes the browser redraw their blur on every
+    // frame and delays the paint after every interaction (INP; src/test/ui/vitals.spec.ts).
+    const files = [baseCss, componentsCss, shellCss, pagesCss];
+    const endless = files.flatMap((css) => [...css.matchAll(/([^{}]+)\{[^{}]*animation:[^;{}]*\binfinite\b[^{}]*\}/g)].map((m) => m[1].replace(/\/\*[\s\S]*?\*\//g, "").trim()));
+    expect(endless.length).toBeGreaterThan(0);
+    for (const selector of endless) expect(selector, selector).toMatch(/\.(skeleton|spinner)\b/);
   });
 });

@@ -1,28 +1,28 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  */
 import { memo } from "react";
 import { useSession } from "@/App";
 import { ROLE_LABEL } from "@/lib/rbac";
 import { Avatar, EmptyState, SeverityChip } from "@/lib/ui";
 import { Bar } from "@/lib/charts";
-import type { CaseSignals } from "@/lib/signals";
+import type { DashboardSummary } from "@/lib/summary";
 import type { User } from "@/lib/types";
 
-export const CounsellorLoad = memo(function CounsellorLoad({ counsellors, signals }: { counsellors: User[]; signals: CaseSignals[] }) {
+export const CounsellorLoad = memo(function CounsellorLoad({ counsellors, load }: { counsellors: User[]; load: DashboardSummary["counsellors"] }) {
   const { go, can } = useSession();
   if (counsellors.length === 0) return <EmptyState glyph="students" title="No counsellors yet" reason="Create counsellor profiles under Staff, then assign cases." action={can("staff.write") ? <button type="button" className="btn btn-primary btn-sm" onClick={() => go({ page: "staff" })}>Create a counsellor</button> : undefined} />;
-  const open = signals.filter((s) => s.status === "open");
-  const max = Math.max(1, ...counsellors.map((u) => open.filter((s) => s.counsellorId === u.id).length));
+  const byId = new Map(load.map((x) => [x.id, x]));
+  const max = Math.max(1, ...counsellors.map((u) => byId.get(u.id)?.open ?? 0));
   return (
     <ul className="load" aria-label="Counsellor caseload">
       {counsellors.map((u) => {
-        const mine = open.filter((s) => s.counsellorId === u.id);
-        const gates = mine.filter((s) => s.gatePending).length;
-        const docs = mine.reduce((n, s) => n + s.docsToReview, 0);
-        const bad = mine.filter((s) => s.breached > 0 || s.gateReturned).length;
+        const x = byId.get(u.id);
+        const mine = { length: x?.open ?? 0 };
+        const gates = x?.gates ?? 0;
+        const docs = x?.docs ?? 0;
+        const bad = x?.bad ?? 0;
         return (
           <li key={u.id} className="load-row">
             <Avatar name={u.name} size={32} />

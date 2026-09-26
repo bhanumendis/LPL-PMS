@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  */
 import { describe, expect, it } from "vitest";
 import { fanout, recipientsHolding, type FanoutContext } from "./fanout";
@@ -12,7 +11,7 @@ import { blankCase, ISO, user } from "@/test/fixtures";
 import type { CaseRecord, DocItem, GateSubmission } from "@/lib/types";
 
 const users = {
-  admin: user({ id: "admin", role: "admin" }),
+  admin: user({ id: "admin", role: "super_admin" }),
   tl: user({ id: "tl", role: "team_leader" }),
   couns: user({ id: "couns", role: "counsellor" }),
   stu: user({ id: "stu", role: "student" }),

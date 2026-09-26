@@ -1,6 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
+ * Developed by Bhanu Mendis - Group IT
  *
  * WCAG contrast verification for the design tokens in src/styles/app.css.
  *

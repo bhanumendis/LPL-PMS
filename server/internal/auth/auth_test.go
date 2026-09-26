@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 package auth
 
 import (
@@ -108,8 +107,11 @@ func TestVerifyES256ViaJWKS(t *testing.T) {
 		t.Fatal(err)
 	}
 	b64 := func(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
-	x := priv.PublicKey.X.FillBytes(make([]byte, 32))
-	y := priv.PublicKey.Y.FillBytes(make([]byte, 32))
+	point, err := priv.PublicKey.Bytes() // 0x04 || X || Y
+	if err != nil {
+		t.Fatal(err)
+	}
+	x, y := point[1:33], point[33:]
 	fetches := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fetches++

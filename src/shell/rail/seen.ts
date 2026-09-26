@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * "Unseen updates" for the rail: when the counsellor last opened each case, kept in this
  * browser. No schema change; a case is unseen when it changed after that moment and the last

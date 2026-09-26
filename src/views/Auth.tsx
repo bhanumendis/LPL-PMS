@@ -1,14 +1,14 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  */
 import React, { useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { useSession, LiveBadge, Copyright, ThemeToggle, useDocumentTitle, APP_VERSION } from "@/App";
+import { useSession, LiveBadge, Attribution, ThemeToggle, useDocumentTitle, APP_VERSION } from "@/App";
 import { EVENTS } from "@/lib/audit";
-import { store, hashPassword, uid, nowIso, passwordProblem, MIN_PASSWORD_LENGTH } from "@/lib/store";
-import { BRAND_LOGO, COPYRIGHT, ORG_SHORT, PRODUCT, DOC_REF } from "@/lib/brand";
+import { store, hashPassword, uid, nowIso, passwordProblem, MIN_PASSWORD_LENGTH, DEV_GROUP_IT_DOMAINS } from "@/lib/store";
+import { isGroupItEmail } from "@/lib/rbac";
+import { BRAND_LOGO, ATTRIBUTION, ORG_SHORT, PRODUCT, DOC_REF } from "@/lib/brand";
 import { Notice, useToast, TextField } from "@/lib/ui";
 import type { User } from "@/lib/types";
 
@@ -34,7 +34,7 @@ export function AuthScreen() {
         </div>
         <div className="foot">
           <span>Built on {DOC_REF}</span>
-          <span>{COPYRIGHT}</span>
+          <span>{ATTRIBUTION}</span>
         </div>
       </aside>
       <main className="auth-main" id="main">
@@ -45,7 +45,7 @@ export function AuthScreen() {
           </div>
           {setup ? <SignInForm /> : <SetupAdmin />}
           <div className="flex aic jcb wrap g2 mt4">
-            <Copyright />
+            <Attribution />
             <span className="ui xs muted">v{APP_VERSION}</span>
           </div>
         </div>
@@ -84,10 +84,17 @@ function SetupAdmin() {
     if (f.password !== f.confirm) return setErr("The two passwords do not match.");
     setBusy(true);
 
-    // Server-backed: the identity provider owns the password. The database trigger makes
-    // the first account an administrator and rejects every later sign-up, so there is
-    // nothing to assert from the client.
+    // The first account is the SUPER ADMIN, so it must be a Group IT address. The database
+    // refuses anything else; checking first turns that refusal into a clear sentence.
     const server = store.server;
+    const domains = server ? await server.bootstrapDomains().catch(() => [] as string[]) : [...DEV_GROUP_IT_DOMAINS];
+    if (domains.length && !isGroupItEmail(f.email, domains)) {
+      setBusy(false);
+      return setErr(`The first account is the Super Admin and must use a Group IT address (${domains.map((d) => "@" + d).join(", ")}).`);
+    }
+
+    // Server-backed: the identity provider owns the password. The database trigger makes
+    // the first account the SUPER ADMIN and rejects every later sign-up.
     if (server) {
       const r = await server.bootstrapSignUp(f.email, f.password, { name: f.name.trim(), phone: f.phone.trim() });
       if ("error" in r) { setBusy(false); return setErr(r.error); }
@@ -98,13 +105,13 @@ function SetupAdmin() {
       await store.mutateOrg((o) => { o.config.setupComplete = true; return o; });
       await store.audit(EVENTS.adminBootstrapped(profile), profile);
       setBusy(false);
-      toast("Administrator account created");
+      toast("Super Admin account created");
       signIn(profile);
       return;
     }
 
     const hash = await hashPassword(f.password);
-    const u: User = { id: uid(), name: f.name.trim(), email: f.email.trim().toLowerCase(), phone: f.phone.trim(), role: "admin", passwordHash: hash, active: true, createdAt: nowIso(), lastSignInAt: nowIso() };
+    const u: User = { id: uid(), name: f.name.trim(), email: f.email.trim().toLowerCase(), phone: f.phone.trim(), role: "super_admin", passwordHash: hash, active: true, createdAt: nowIso(), lastSignInAt: nowIso() };
     const org = await store.mutateOrg((o) => {
       if (o.config.setupComplete) return o;
       o.users[u.id] = u;
@@ -114,14 +121,14 @@ function SetupAdmin() {
     if (!org.users[u.id]) { setBusy(false); setErr("An administrator has already been set up. Sign in instead."); return; }
     await store.audit(EVENTS.adminBootstrapped(u), u);
     setBusy(false);
-    toast("Administrator account created");
+    toast("Super Admin account created");
     signIn(u);
   };
   return (
     <form onSubmit={submit} className="stack" noValidate>
       <div>
-        <h1>Set up the administrator</h1>
-        <p className="muted mt1">This is the only account ever created from this screen. Every other sign-in is issued by the administrator.</p>
+        <h1>Set up the Super Admin</h1>
+        <p className="muted mt1">This is the only account ever created from this screen, and it must use a Group IT email address. Every other sign-in is issued from inside the system.</p>
       </div>
       <div className="form-grid">
         <TextField label="Full name" value={f.name} onChange={(v) => setF({ ...f, name: v })} required autoComplete="name" />

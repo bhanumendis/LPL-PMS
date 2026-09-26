@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Prompt Engineer Workspace. An isolated, Administrator-only area for authoring, previewing
  * and versioning prompt templates. Nothing here calls a model or any external API: the
@@ -90,7 +89,7 @@ const sameDraft = (a: Draft, b: Draft) => JSON.stringify({ ...a, note: "" }) ===
 // ---------- page ----------
 
 export function PromptEngineerPage() {
-  const { isAdmin, user, snap, route, go, audit } = useSession();
+  const { isSuperAdmin, user, snap, route, go, audit } = useSession();
   const toast = useToast();
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"all" | PromptStatus>("all");
@@ -98,7 +97,7 @@ export function PromptEngineerPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const searchId = useId();
   const filterId = useId();
-  if (!isAdmin || !user) return <div className="panel"><div className="panel-b"><h2>Not permitted</h2><p className="muted mt1">The Prompt Engineer Workspace is available to the Administrator only.</p></div></div>;
+  if (!isSuperAdmin || !user) return <div className="panel"><div className="panel-b"><h2>Not permitted</h2><p className="muted mt1">The Prompt Engineer Workspace is reserved for Super Admin (Group IT).</p></div></div>;
 
   const prompts = Object.values(snap.prompts.prompts).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const needle = q.trim().toLowerCase();

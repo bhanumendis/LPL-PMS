@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  *
  * Persistence. Adapters are tried in order:
  *   1. supabase      — a real server, when one is configured (see server.ts)
@@ -15,17 +14,23 @@
  */
 import type { AuditEntry, AuditState, CaseRecord, CasesState, OrgState, PromptsState, User } from "./types";
 import { DEFAULT_RETENTION, MIN_PASSWORD_LENGTH, defaultAudit, defaultCases, defaultConfig, defaultOrg, defaultPrompts, normalizeConfig } from "./defaults";
-import { SupabaseBackend, readServerConfig } from "./server";
+import { ServerError, SupabaseBackend, readServerConfig } from "./server";
 import type { NotificationRow, NotificationState } from "@/notifications/types";
 import { fanout } from "@/notifications/fanout";
 import type { PushDevice, PushSubscriptionInput } from "@/notifications/push";
 import type { AuditEvent, AuditEventType, EntityType } from "./audit";
 import { sessionId } from "./hooks";
+import { BROWSER_STORAGE_ALLOWED } from "./runtime";
+import { migrateRbac } from "./rbac";
+import { localReadModel, type ReadModel } from "./queries";
 
 /** Filters for one page of the audit log. `before` is the `at` of the last row already shown. */
 export interface AuditQuery { before?: string | null; actorId?: string; eventType?: AuditEventType; entityType?: EntityType; entityId?: string; from?: string; to?: string; q?: string; limit?: number }
 
 export const AUDIT_WINDOW_DAYS = 30;
+
+/** Development/browser-storage stand-in for public.group_it_domains. */
+export const DEV_GROUP_IT_DOMAINS: readonly string[] = ["lyceum.lk"];
 
 /** The browser-storage form of audit_page: same filters, same default window, same ordering. */
 export function filterAudit(entries: AuditEntry[], q: AuditQuery, now = Date.now()): AuditEntry[] {
@@ -48,7 +53,7 @@ export function filterAudit(entries: AuditEntry[], q: AuditQuery, now = Date.now
 
 export { DEFAULT_RETENTION, MIN_PASSWORD_LENGTH, defaultConfig, defaultOrg, defaultCases, defaultAudit, defaultPrompts };
 
-export type BackendKind = "server" | "shared" | "local" | "memory";
+export type BackendKind = "server" | "shared" | "local" | "memory" | "unconfigured";
 
 export interface Workspace {
   org: OrgState;
@@ -109,9 +114,16 @@ function parse<T>(raw: string | null, fallback: T): T {
   try { return { ...fallback, ...(JSON.parse(raw) as T) }; } catch { return fallback; }
 }
 
-/** Stored organisation state is brought up to the current configuration shape on every load. */
+/**
+ * Stored organisation state is brought up to the current configuration shape on every load.
+ * A browser-storage workspace from before v6 is moved to the SUPER ADMIN / ADMIN model the
+ * same way the database migration moves a server.
+ */
 function normalizeOrg(o: OrgState): OrgState {
-  return { config: normalizeConfig(o.config), users: o.users && typeof o.users === "object" ? o.users : {} };
+  const users = o.users && typeof o.users === "object" ? o.users : {};
+  const config = { ...(o.config ?? {}) } as OrgState["config"];
+  migrateRbac(config, users);
+  return { config: normalizeConfig(config), users };
 }
 
 // ---------- browser key-value adapters ----------
@@ -291,22 +303,36 @@ function localStorageUsable(): boolean {
   } catch { return false; }
 }
 
+/**
+ * A production build with no server connection. It holds nothing and accepts nothing; the
+ * application shows the "not connected" screen instead of quietly keeping records in the
+ * browser, where they would be unprotected and invisible to everyone else.
+ */
+class UnconfiguredBackend extends KvBackend {
+  kind = "memory" as const;
+  polling = false;
+  protected kv: Kv = {
+    get: async () => null,
+    set: async () => { throw new Error("This installation is not connected to its server."); },
+    del: async () => undefined,
+  };
+}
+
 function pickBackend(): Backend {
   const server = readServerConfig();
   if (server) return new SupabaseBackend(server);
+  if (!BROWSER_STORAGE_ALLOWED) return new UnconfiguredBackend();
   if (typeof window !== "undefined" && window.storage && typeof window.storage.get === "function") return new SharedBackend();
   if (typeof window !== "undefined" && localStorageUsable()) return new LocalStorageBackend();
   return new MemoryBackend();
 }
 
+function kindOf(b: Backend): BackendKind { return b instanceof UnconfiguredBackend ? "unconfigured" : b.kind; }
+
 // ---------- helpers ----------
 
-export function uid(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
-  return "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
-
-export function nowIso(): string { return new Date().toISOString(); }
+export { uid, nowIso } from "./ids";
+import { nowIso, uid } from "./ids";
 
 /**
  * Deep copy of plain workspace data. The mutation helpers change records in place, so the
@@ -376,9 +402,59 @@ class Store {
   private timer: number | null = null;
   private unwatch: (() => void) | null = null;
   private busy = 0;
-  snap: Snapshot = { ...defaultWorkspace(), loaded: false, syncedAt: 0, backend: this.backend.kind };
+  snap: Snapshot = { ...defaultWorkspace(), loaded: false, syncedAt: 0, backend: kindOf(this.backend) };
 
-  get kind(): BackendKind { return this.backend.kind; }
+  get kind(): BackendKind { return kindOf(this.backend); }
+
+  // ---------- the read model ----------
+
+  /**
+   * Lists, counts, registers and dashboards. On a server the database answers them a page at a
+   * time under row-level security; in browser storage src/lib/queries.ts answers them from the
+   * workspace in memory, as the signed-in user would see it.
+   */
+  get read(): ReadModel {
+    return this.server?.read ?? this.localRead;
+  }
+  private localRead = localReadModel(() => ({
+    cases: Object.values(this.snap.cases.cases), users: Object.values(this.snap.org.users), config: this.snap.org.config,
+    viewer: this.currentUserId ? this.snap.org.users[this.currentUserId] ?? null : null,
+  }));
+
+  /** Bumped whenever what the read model answers may have changed; open lists re-read on it. */
+  readVersion = 0;
+  private readListeners = new Set<() => void>();
+  onRead(fn: () => void) { this.readListeners.add(fn); return () => { this.readListeners.delete(fn); }; }
+  private bumpRead() { this.readVersion++; this.readListeners.forEach((l) => l()); }
+
+  /**
+   * Case documents in use. In browser storage every case is in the snapshot; on a server only
+   * the ones opened (and a student's own) are, and a document is fetched when a view needs it.
+   * Views that show one hold a watch on it, so a change elsewhere is re-read while it is open.
+   */
+  private watched = new Map<string, number>();
+  watchCase(id: string): () => void {
+    this.watched.set(id, (this.watched.get(id) ?? 0) + 1);
+    return () => { const n = (this.watched.get(id) ?? 1) - 1; if (n > 0) this.watched.set(id, n); else this.watched.delete(id); };
+  }
+
+  /** The case document, from the snapshot or (on a server) fetched. Null when not visible. */
+  async openCase(id: string): Promise<CaseRecord | null> {
+    const cached = this.snap.cases.cases[id];
+    const server = this.server;
+    if (cached || !server) return cached ?? null;
+    const c = await server.getCase(id);
+    if (c) this.putCases([c]);
+    return c;
+  }
+
+  private putCases(list: CaseRecord[], drop: string[] = []) {
+    const cases = { ...this.snap.cases.cases };
+    for (const c of list) cases[c.id] = c;
+    for (const id of drop) delete cases[id];
+    this.snap = { ...this.snap, cases: { cases, rev: (this.snap.cases.rev ?? 0) + 1 } };
+    this.emit();
+  }
 
   /** The server adapter when one is connected, for the sign-in flow. Null on browser storage. */
   get server(): SupabaseBackend | null { return this.backend instanceof SupabaseBackend ? this.backend : null; }
@@ -389,7 +465,7 @@ class Store {
     this.unwatch?.(); this.unwatch = null;
     if (this.backend instanceof MemoryBackend) this.backend.close();
     this.backend = pickBackend();
-    this.snap = { ...defaultWorkspace(), loaded: false, syncedAt: 0, backend: this.backend.kind };
+    this.snap = { ...defaultWorkspace(), loaded: false, syncedAt: 0, backend: kindOf(this.backend) };
     this.emit();
     return this.start();
   }
@@ -409,6 +485,7 @@ class Store {
     this.currentUserId = id;
     this.notif = { unread: 0, latest: null };
     this.emitNotif();
+    this.bumpRead();
     if (id) void this.pollNotifications();
   }
   get currentUser(): string | null { return this.currentUserId; }
@@ -492,18 +569,14 @@ class Store {
 
   /** Last time the backend was reached; kept off the snapshot so a quiet poll re-renders nothing. */
   syncedAt = 0;
-  private lastVersion: string | null = null;
+  /** The server's change counters at the last poll; null forces a full load. */
+  private versions: Record<string, number> | null = null;
 
   async refresh() {
     void this.pollNotifications();
     try {
-      // Server: ask for a one-row version first and skip the full download when nothing moved.
       const server = this.server;
-      if (server && this.snap.loaded) {
-        const v = await server.version();
-        if (v !== null && v === this.lastVersion) { this.syncedAt = Date.now(); return; }
-        this.lastVersion = v;
-      }
+      if (server) { await this.refreshServer(server); return; }
       const { org, cases, audit, prompts } = await this.backend.load();
       this.syncedAt = Date.now();
       const changed = !this.snap.loaded
@@ -513,11 +586,48 @@ class Store {
         || usersSignature(org.users) !== usersSignature(this.snap.org.users)
         || Object.keys(cases.cases).length !== Object.keys(this.snap.cases.cases).length
         || Object.keys(prompts.prompts).length !== Object.keys(this.snap.prompts.prompts).length;
-      if (changed) this.update({ org, cases, audit, prompts, loaded: true, syncedAt: this.syncedAt, error: undefined });
+      if (changed) { this.update({ org, cases, audit, prompts, loaded: true, syncedAt: this.syncedAt, error: undefined }); this.bumpRead(); }
       else if (!this.snap.loaded || this.snap.error) this.update({ loaded: true, syncedAt: this.syncedAt, error: undefined });
     } catch (e) {
       this.update({ loaded: true, error: (e as Error).message });
     }
+  }
+
+  /**
+   * One small read per poll (four counters). What moved is re-read, and nothing else: the
+   * configuration and staff directory, the prompts, or — for cases — the documents currently
+   * open, while open lists and dashboards re-read their page.
+   */
+  private async refreshServer(server: SupabaseBackend) {
+    const v = await server.changeVersions();
+    const prev = this.versions;
+    if (!v || !prev || !this.snap.loaded) {
+      const { org, cases, audit, prompts } = await server.load();
+      this.versions = v;
+      this.syncedAt = Date.now();
+      this.update({ org, cases, audit, prompts, loaded: true, syncedAt: this.syncedAt, error: undefined });
+      this.bumpRead();
+      return;
+    }
+    this.versions = v;
+    this.syncedAt = Date.now();
+    const patch: Partial<Snapshot> = {};
+    if (v.users !== prev.users || v.config !== prev.config) patch.org = await server.loadOrg();
+    if (v.prompts !== prev.prompts) patch.prompts = await server.loadPrompts();
+    if (v.cases !== prev.cases) {
+      const self = this.currentUserId ? (patch.org ?? this.snap.org).users[this.currentUserId] : undefined;
+      if (self?.role === "student") patch.cases = (await server.load()).cases;
+      else {
+        // Re-read the documents on screen; forget the rest (they are fetched again if reopened).
+        const ids = [...this.watched.keys()];
+        const fresh = await Promise.all(ids.map((id) => server.getCase(id).catch(() => this.snap.cases.cases[id] ?? null)));
+        const cases: Record<string, CaseRecord> = {};
+        fresh.forEach((c) => { if (c) cases[c.id] = c; });
+        patch.cases = { cases, rev: (this.snap.cases.rev ?? 0) + 1 };
+      }
+    }
+    if (Object.keys(patch).length || this.snap.error) this.update({ ...patch, syncedAt: this.syncedAt, error: undefined });
+    if (patch.cases || patch.org) this.bumpRead();
   }
 
   /**
@@ -529,8 +639,15 @@ class Store {
     try { return await fn(); }
     catch (e) {
       const message = (e as Error).message || "The change could not be saved.";
-      this.update({ error: message });
       this.errorListeners.forEach((l) => l(message));
+      if (e instanceof ServerError && e.status === 409) {
+        // Someone else saved first. The write was refused whole, so nothing is half-applied:
+        // drop the cached version and load theirs, and the user repeats the action on it.
+        this.versions = null;
+        await this.refresh();
+      } else {
+        this.update({ error: message });
+      }
       throw e;
     }
     finally { this.busy--; }
@@ -544,17 +661,64 @@ class Store {
    */
   async mutateOrg(fn: (o: OrgState) => OrgState | void): Promise<OrgState> {
     return this.withLock(async () => {
-      const before = await this.backend.load();
-      const prev = deepClone(before.org);
-      const next = (fn(before.org) as OrgState | undefined) ?? before.org;
+      // A server re-reads the configuration and staff directory only, never the whole workspace.
+      const current = this.server ? await this.server.loadOrg() : (await this.backend.load()).org;
+      const prev = deepClone(current);
+      const next = (fn(current) as OrgState | undefined) ?? current;
       if (configWithoutRev(next.config) !== configWithoutRev(prev.config)) next.config.rev = (next.config.rev ?? 0) + 1;
       await this.backend.saveOrg(next, prev);
       this.update({ org: next, syncedAt: Date.now() });
+      this.bumpRead();
       return next;
     });
   }
 
+  /**
+   * One profile, which need not be in the staff directory the session holds (a student's is
+   * not). The latest stored version is read first, so the change applies to what is current.
+   */
+  async mutateUser(id: string, fn: (u: User) => User | void): Promise<User | null> {
+    const server = this.server;
+    if (!server) {
+      let out: User | null = null;
+      await this.mutateOrg((o) => { const u = o.users[id]; if (u) { out = (fn(u) as User | undefined) ?? u; o.users[id] = out; } });
+      return out;
+    }
+    return this.withLock(async () => {
+      const current = await server.getUser(id);
+      if (!current) throw new ServerError("This profile is not available to you.", 404);
+      const prev = deepClone(current);
+      const next = (fn(current) as User | undefined) ?? current;
+      await server.saveUser(next, prev);
+      if (this.snap.org.users[id]) this.update({ org: { ...this.snap.org, users: { ...this.snap.org.users, [id]: next } } });
+      this.bumpRead();
+      return next;
+    });
+  }
+
+  /** Whether a profile already uses this address. On a server the unique key is the final word. */
+  async emailTaken(email: string): Promise<boolean> {
+    const server = this.server;
+    if (server) return server.emailTaken(email);
+    return !!this.findUserByEmail(email);
+  }
+
+  /** Opens a new case (revision 1). */
+  async createCase(c: CaseRecord): Promise<CaseRecord> {
+    const server = this.server;
+    if (!server) { await this.mutateCases((s) => { s.cases[c.id] = c; return s; }); return c; }
+    return this.withLock(async () => {
+      const created = { ...c, rev: 1 };
+      await server.insertCase(created);
+      this.putCases([created]);
+      this.bumpRead();
+      return created;
+    });
+  }
+
+  /** Browser storage only: a server never writes the whole case collection (see mutateCase, createCase). */
   async mutateCases(fn: (c: CasesState) => CasesState | void): Promise<CasesState> {
+    if (this.server) throw new Error("mutateCases is not available on a server; use mutateCase or createCase.");
     return this.withLock(async () => {
       const before = await this.backend.load();
       const prev = deepClone(before.cases);
@@ -562,12 +726,33 @@ class Store {
       next.rev = (next.rev ?? 0) + 1;
       await this.backend.saveCases(next, prev);
       this.update({ cases: next, syncedAt: Date.now() });
+      this.bumpRead();
       await this.fanoutLocal(prev, next);
       return next;
     });
   }
 
+  /**
+   * Changes one case. On a server the latest stored document is read first, the change applied
+   * to it, and it is saved at the next revision; the database refuses the save (409) if
+   * someone else saved in between, and nothing is half-applied.
+   */
   async mutateCase(id: string, fn: (c: CaseRecord) => CaseRecord | void): Promise<CaseRecord | null> {
+    const server = this.server;
+    if (server) {
+      return this.withLock(async () => {
+        const current = await server.getCase(id);
+        if (!current) throw new ServerError("This case is no longer available to you.", 404);
+        const prev = deepClone(current);
+        const next = (fn(current) as CaseRecord | undefined) ?? current;
+        next.updatedAt = nowIso();
+        next.rev = (prev.rev ?? 0) + 1;
+        await server.saveCase(next);
+        this.putCases([next]);
+        this.bumpRead();
+        return next;
+      });
+    }
     let out: CaseRecord | null = null;
     await this.mutateCases((s) => {
       const cur = s.cases[id];
@@ -583,9 +768,9 @@ class Store {
 
   async mutatePrompts(fn: (p: PromptsState) => PromptsState | void): Promise<PromptsState> {
     return this.withLock(async () => {
-      const before = await this.backend.load();
-      const prev = deepClone(before.prompts);
-      const next = (fn(before.prompts) as PromptsState | undefined) ?? before.prompts;
+      const current = this.server ? await this.server.loadPrompts() : (await this.backend.load()).prompts;
+      const prev = deepClone(current);
+      const next = (fn(current) as PromptsState | undefined) ?? current;
       next.rev = (next.rev ?? 0) + 1;
       await this.backend.savePrompts(next, prev);
       this.update({ prompts: next, syncedAt: Date.now() });
@@ -625,6 +810,7 @@ class Store {
       p.rev = (p.rev ?? 0) + 1;
       await this.backend.replaceAll({ org: normalizedOrg, cases, audit, prompts: p });
       this.update({ org: normalizedOrg, cases, audit, prompts: p, syncedAt: Date.now() });
+      this.bumpRead();
     });
   }
 
@@ -632,7 +818,19 @@ class Store {
     await this.withLock(async () => {
       await this.backend.clear();
       this.update({ ...defaultWorkspace(), syncedAt: Date.now() });
+      this.bumpRead();
     });
+  }
+
+  /**
+   * Group IT domains for SUPER ADMIN. The database holds and enforces the list; this is only
+   * so the interface can explain a refusal before it happens. Browser storage (development)
+   * uses the production default.
+   */
+  async groupItDomains(): Promise<string[]> {
+    const server = this.server;
+    if (!server) return [...DEV_GROUP_IT_DOMAINS];
+    try { return await server.groupItDomains(); } catch { return []; }
   }
 
   findUserByEmail(email: string): User | undefined {

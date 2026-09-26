@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  */
 import { describe, expect, it } from "vitest";
 import { diffChanges, EVENTS, RESTRICTED, type AuditEvent } from "./audit";
@@ -43,11 +42,11 @@ describe("typed audit events", () => {
       EVENTS.documentUploaded(c, "Passport", "p.pdf"), EVENTS.documentReviewed(c, "p.pdf", true), EVENTS.documentRemoved(c, "Passport", "p.pdf"),
       EVENTS.profileCreated(u), EVENTS.profileUpdated(u, []), EVENTS.signInIssued(u.email, "Counsellor"), EVENTS.signInNotIssued(u.email), EVENTS.temporaryPassword(u), EVENTS.accountActive(u, false), EVENTS.adminBootstrapped(u),
       EVENTS.permissionChanged("case.read", "counsellor", true), EVENTS.permissionsReset(), EVENTS.caseScopeChanged("counsellor", "assigned"),
-      EVENTS.settingsUpdated(), EVENTS.backupExported(), EVENTS.backupRestored("b.json"), EVENTS.workspaceReset(), EVENTS.sampleDataAdded(5, 20), EVENTS.sampleDataRemoved(5, 20), EVENTS.serverConnected("https://x"), EVENTS.serverDisconnected(),
+      EVENTS.settingsUpdated(), EVENTS.backupExported(), EVENTS.backupRestored("b.json"), EVENTS.workspaceReset(), EVENTS.serverConnected("https://x"), EVENTS.serverDisconnected(),
       EVENTS.disposed(c, "basis"), EVENTS.legalHold(c, true, "r"), EVENTS.transferUpdated({ id: "t1", caseRef: c.ref, recipient: "Uni" }, "SCC"), EVENTS.registerExported(3), EVENTS.processorAdded({ name: "Host", country: "SG", safeguard: "DPA" }), EVENTS.processorRemoved("Host"),
       EVENTS.promptCreated({ id: "p1", title: "T" }), EVENTS.promptDuplicated({ id: "p2", title: "T2" }, "p1"), EVENTS.promptDeleted({ id: "p1", title: "T" }), EVENTS.promptSaved({ id: "p1", title: "T" }, 2), EVENTS.promptsExported([{ title: "T" }]), EVENTS.promptsImported("f.json", 2),
       EVENTS.sessionSignIn(u), EVENTS.sessionSignOut(u), EVENTS.signInFailed(u.email, "Invalid credentials"),
-      EVENTS.overviewExported(), EVENTS.staffExported(), EVENTS.auditExported({ eventType: "gate" }, 4), EVENTS.notificationsRead(3),
+      EVENTS.roleAssigned({ id: "u", name: "U", email: "u@x" }, "Counsellor", "Team Leader"), EVENTS.overviewExported(), EVENTS.staffExported(), EVENTS.auditExported({ eventType: "gate" }, 4), EVENTS.notificationsRead(3),
     ];
     expect(all).toHaveLength(Object.keys(EVENTS).length);
     for (const e of all) {

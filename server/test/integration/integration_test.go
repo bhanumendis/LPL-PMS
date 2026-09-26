@@ -1,6 +1,5 @@
 // Lyceum Placements — Placement Management System
-// Copyright (c) 2026 Bhanu Mendis. All rights reserved.
-// Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+// Copyright © Bhanu Mendis - LGH IT
 // Integration suite: lpl-api in front of a real Postgres running supabase/schema.sql.
 //
 // Set TEST_DATABASE_URL (and optionally TEST_JWT_SECRET) to run it. The suite applies the
@@ -58,6 +57,11 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
+	// The suite's accounts live on test.local, which plays the Group IT domain here.
+	if err := execSQL(ctx, dsn, "insert into public.group_it_domains (domain, note) values ('test.local', 'integration suite') on conflict do nothing"); err != nil {
+		fmt.Println("integration: group IT domain:", err)
+		os.Exit(1)
+	}
 	var err error
 	pool, err = db.Open(ctx, dsn, 4, false, "service_role")
 	if err != nil {
@@ -67,7 +71,7 @@ func TestMain(m *testing.M) {
 	srv, err := httpapi.New(httpapi.Deps{
 		Config: config.Config{
 			AnonKey: "anon-key", ServiceRoleKey: "service-key", GoTrueURL: "http://gotrue.invalid",
-			MaxBodyBytes: 10 << 20, RequestTimeout: 30 * time.Second, CORSAllowOrigin: "*",
+			MaxBodyBytes: 10 << 20, RequestTimeout: 30 * time.Second, CORSAllowOrigins: []string{"*"},
 		},
 		Runner:   pool,
 		Resolver: auth.NewVerifier("anon-key", secret, "", 0),
@@ -91,12 +95,16 @@ func applySQL(ctx context.Context, dsn, file string) error {
 	if err != nil {
 		return err
 	}
+	return execSQL(ctx, dsn, string(sqlText))
+}
+
+func execSQL(ctx context.Context, dsn, sqlText string) error {
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(ctx)
-	results, err := conn.PgConn().Exec(ctx, string(sqlText)).ReadAll()
+	results, err := conn.PgConn().Exec(ctx, sqlText).ReadAll()
 	if err != nil {
 		return err
 	}
@@ -150,9 +158,11 @@ func reset(t *testing.T) {
 	t.Helper()
 	system(t, func(ctx context.Context, ex db.Executor) error {
 		for _, stmt := range []string{
-			"truncate public.cases, public.audit, public.prompts, public.org_config, public.app_users",
+			"truncate public.case_stamps, public.case_transfers, public.case_gates, public.dashboard_cache, public.cases, public.audit, public.prompts, public.org_config, public.app_users, public.notifications, public.push_subscriptions",
 			"delete from auth.users",
 			"select setval('public.case_ref_seq', 1, false)",
+			// A fresh database carries the organisation row (v6 write path).
+			"insert into public.org_config (id, config) values ('org', '{}'::jsonb)",
 		} {
 			if _, err := ex.Exec(ctx, stmt); err != nil {
 				return err
@@ -174,7 +184,8 @@ func mintToken(t *testing.T, authID string) string {
 }
 
 // bootstrapAdmin performs the first sign-up as GoTrue would: an auth.users row with no
-// app_metadata on an empty project. The trigger creates the Administrator profile.
+// app_metadata on an empty project, from a Group IT address. The trigger creates the first
+// SUPER ADMIN profile.
 func bootstrapAdmin(t *testing.T) identity {
 	t.Helper()
 	var id identity
@@ -221,20 +232,6 @@ func insertCase(t *testing.T, id, ref, counsellorID, studentID string) {
 			id, ref, counsellorID, studentID, caseJSON(id, ref, counsellorID, studentID))
 		return err
 	})
-}
-
-// caseRow is the payload src/lib/server.ts sends for a case (fromCase).
-func caseRow(id, ref, status, counsellorID, studentID string, rev int, data map[string]any) string {
-	row := map[string]any{"id": id, "ref": ref, "status": status, "counsellor_id": nilIfEmpty(counsellorID), "student_user_id": nilIfEmpty(studentID), "rev": rev, "updated_at": "2026-09-03T00:00:00.000Z", "data": data}
-	b, _ := json.Marshal([]any{row})
-	return string(b)
-}
-
-func nilIfEmpty(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 func loadCaseData(t *testing.T, id string) map[string]any {
@@ -288,9 +285,31 @@ func call(t *testing.T, method, path, token, body string, headers map[string]str
 	return reply{Status: res.StatusCode, Body: string(b), Header: res.Header}
 }
 
-func upsert(t *testing.T, table, token, body string) reply {
+// insert is what src/lib/server.ts sends for a new row: a plain POST, no upsert.
+func insert(t *testing.T, table, token, body string) reply {
 	t.Helper()
-	return call(t, http.MethodPost, "/rest/v1/"+table+"?on_conflict=id", token, body, map[string]string{"Prefer": "return=minimal,resolution=merge-duplicates"})
+	return call(t, http.MethodPost, "/rest/v1/"+table, token, body, map[string]string{"Prefer": "return=minimal"})
+}
+
+// patch is what src/lib/server.ts sends for a changed row.
+func patch(t *testing.T, table, filter, token, body string) reply {
+	t.Helper()
+	return call(t, http.MethodPatch, "/rest/v1/"+table+"?"+filter, token, body, map[string]string{"Prefer": "return=minimal"})
+}
+
+// casePatch is a raw PATCH of a case (what a hand-crafted API call would send).
+func casePatch(rev int, data map[string]any) string {
+	data["rev"] = rev
+	b, _ := json.Marshal(map[string]any{"rev": rev, "data": data})
+	return string(b)
+}
+
+// saveCase is what saveCases sends: the save_case RPC with the next revision.
+func saveCase(t *testing.T, token, id string, rev int, data map[string]any) reply {
+	t.Helper()
+	data["rev"] = rev
+	b, _ := json.Marshal(map[string]any{"p_id": id, "p_rev": rev, "p_data": data})
+	return rpc(t, "save_case", token, string(b))
 }
 
 func rpc(t *testing.T, fn, token, body string) reply {
@@ -328,7 +347,7 @@ func TestBootstrap(t *testing.T) {
 	admin := bootstrapAdmin(t)
 	expect(t, rpc(t, "needs_bootstrap", "", ""), 200, "false")
 	r := call(t, http.MethodGet, "/rest/v1/app_users?select=*&auth_id=eq."+admin.AuthID, admin.Token, "", nil)
-	expect(t, r, 200, `"role":"admin"`)
+	expect(t, r, 200, `"role":"super_admin"`)
 	if rows := rowsOf(t, r.Body); len(rows) != 1 || rows[0]["id"] != admin.AppID || rows[0]["email"] != "admin@test.local" {
 		t.Fatalf("profile %v", rows)
 	}
@@ -338,42 +357,55 @@ func TestBootstrap(t *testing.T) {
 }
 
 // defaultPermissions transcribes DEFAULT_PERMISSIONS from src/lib/rbac.ts. If this test
-// fails, the TypeScript matrix and permission_defaults in schema.sql have drifted apart.
+// fails, the TypeScript matrix and permission_defaults in the schema have drifted apart.
+// SUPER ADMIN is implicit in every cell and is checked separately.
 var defaultPermissions = map[string][]string{
 	"case.view": {"admin", "team_leader", "counsellor", "student"}, "case.read": {"admin", "team_leader", "counsellor", "student"},
-	"case.write": {"admin", "team_leader", "counsellor", "student"}, "case.delete": {"admin"}, "case.download": {"admin", "team_leader", "counsellor"},
+	"case.write": {"admin", "team_leader", "counsellor", "student"}, "case.delete": {}, "case.download": {"admin", "team_leader", "counsellor"},
 	"sensitive.view": {"admin", "team_leader", "counsellor", "student"}, "sensitive.read": {"admin", "team_leader", "counsellor"}, "sensitive.write": {"admin", "team_leader", "counsellor", "student"},
 	"assignment.view": {"admin", "team_leader", "counsellor", "student"}, "assignment.write": {"admin", "team_leader"},
 	"document.view": {"admin", "team_leader", "counsellor", "student"}, "document.read": {"admin", "team_leader", "counsellor", "student"},
-	"document.write": {"admin", "counsellor", "student"}, "document.delete": {"admin"}, "document.download": {"admin", "team_leader", "counsellor", "student"},
+	"document.write": {"admin", "counsellor", "student"}, "document.delete": {}, "document.download": {"admin", "team_leader", "counsellor", "student"},
 	"review.view": {"admin", "team_leader", "counsellor", "student"}, "review.write": {"admin", "team_leader", "counsellor"},
-	"gate.view": {"admin", "team_leader", "counsellor"}, "gate.read": {"admin", "team_leader", "counsellor"}, "gate.write": {"admin", "team_leader"},
+	"gate.view": {"admin", "team_leader", "counsellor"}, "gate.read": {"admin", "team_leader", "counsellor"}, "gate.write": {"team_leader"},
 	"escalation.view": {"admin", "team_leader"}, "escalation.read": {"admin", "team_leader"},
 	"analytics.view": {"admin", "team_leader"}, "analytics.read": {"admin", "team_leader"}, "analytics.download": {"admin", "team_leader"},
-	"staff.view": {"admin", "team_leader", "counsellor"}, "staff.read": {"admin", "team_leader"}, "staff.write": {"admin"}, "staff.delete": {"admin"}, "staff.download": {"admin"},
+	"staff.view": {"admin", "team_leader", "counsellor"}, "staff.read": {"admin", "team_leader"}, "staff.write": {"admin"}, "staff.delete": {}, "staff.download": {"admin"},
 	"account.write": {"admin"}, "account.delete": {"admin"},
-	"role.view": {"admin"}, "role.read": {"admin"}, "role.write": {"admin"},
-	"audit.view": {"admin", "team_leader"}, "audit.read": {"admin", "team_leader"}, "audit.download": {"admin"},
-	"settings.view": {"admin"}, "settings.read": {"admin"}, "settings.write": {"admin"}, "settings.delete": {"admin"},
+	"role.view": {"admin"}, "role.read": {"admin"}, "role.write": {},
+	"audit.view": {"admin", "team_leader"}, "audit.read": {"admin", "team_leader"}, "audit.download": {},
+	"settings.view": {"admin"}, "settings.read": {"admin"}, "settings.write": {"admin"},
 	"dataprotection.view": {"admin", "team_leader"}, "dataprotection.read": {"admin", "team_leader"}, "dataprotection.write": {"admin", "team_leader"},
-	"dataprotection.delete": {"admin"}, "dataprotection.download": {"admin", "team_leader"},
-	"prompt.view": {"admin"}, "prompt.read": {"admin"}, "prompt.write": {"admin"}, "prompt.delete": {"admin"}, "prompt.download": {"admin"},
+	"dataprotection.delete": {}, "dataprotection.download": {"admin", "team_leader"},
+	"system.view": {}, "system.read": {}, "system.write": {}, "system.delete": {},
+	"prompt.view": {}, "prompt.read": {}, "prompt.write": {}, "prompt.delete": {}, "prompt.download": {},
 }
 
 func TestPermissionMatrixMatchesTypeScriptDefaults(t *testing.T) {
 	reset(t)
 	ids := map[string]identity{
-		"admin":       bootstrapAdmin(t),
+		"super_admin": bootstrapAdmin(t),
+		"admin":       provision(t, "admin", "a@test.local", "Placement Admin"),
 		"team_leader": provision(t, "team_leader", "tl@test.local", "Team Leader"),
 		"counsellor":  provision(t, "counsellor", "c@test.local", "Counsellor"),
 		"student":     provision(t, "student", "s@test.local", "Student"),
 	}
-	if len(defaultPermissions) != 52 {
-		t.Fatalf("expected 52 cells, have %d", len(defaultPermissions))
+	if len(defaultPermissions) != 55 {
+		t.Fatalf("expected 55 cells, have %d", len(defaultPermissions))
+	}
+	var n int
+	system(t, func(ctx context.Context, ex db.Executor) error {
+		return ex.QueryRow(ctx, "select count(*)::int from public.permission_defaults").Scan(&n)
+	})
+	if n != len(defaultPermissions) {
+		t.Fatalf("permission_defaults has %d rows, the TypeScript matrix %d", n, len(defaultPermissions))
 	}
 	for perm, roles := range defaultPermissions {
 		for role, id := range ids {
 			want := "false"
+			if role == "super_admin" {
+				want = "true"
+			}
 			for _, r := range roles {
 				if r == role {
 					want = "true"
@@ -385,8 +417,9 @@ func TestPermissionMatrixMatchesTypeScriptDefaults(t *testing.T) {
 			}
 		}
 	}
-	// Anonymous callers hold nothing (functions are executable by PUBLIC; the answer is false).
-	if r := rpc(t, "app_can", "", `{"perm":"case.view"}`); r.Status != 200 || r.Body != "false" {
+	// Anonymous callers hold nothing: since v6.4 they may not even ask (the row-level security
+	// helpers are executable by signed-in roles only).
+	if r := rpc(t, "app_can", "", `{"perm":"case.view"}`); r.Status != http.StatusUnauthorized || !strings.Contains(r.Body, "42501") {
 		t.Fatalf("anon app_can: %d %s", r.Status, r.Body)
 	}
 }
@@ -436,7 +469,7 @@ func TestStudentGuardInsideTheCaseDocument(t *testing.T) {
 	// A student may not move the case status.
 	data := loadCaseData(t, "case-a")
 	data["status"] = "hold"
-	r := upsert(t, "cases", s.Token, caseRow("case-a", "LPL-2026-0001", "hold", c.AppID, s.AppID, 2, data))
+	r := patch(t, "cases", "id=eq.case-a", s.Token, casePatch(2, data))
 	expect(t, r, 400, "Students may only update their own details and documents")
 
 	// A student may supply step-2 answers and record the submission.
@@ -446,8 +479,8 @@ func TestStudentGuardInsideTheCaseDocument(t *testing.T) {
 	step2["values"] = map[string]any{"fullName": "Test Student", "school": "Test School"}
 	step2["studentSubmittedAt"] = "2026-09-03T00:00:00.000Z"
 	data["events"] = []any{map[string]any{"id": "e1", "at": "2026-09-03T00:00:00.000Z", "by": s.AppID, "byName": "Student", "type": "student", "text": "Student submitted profile details", "step": 2}}
-	r = upsert(t, "cases", s.Token, caseRow("case-a", "LPL-2026-0001", "open", c.AppID, s.AppID, 2, data))
-	expect(t, r, 201, "")
+	r = patch(t, "cases", "id=eq.case-a", s.Token, casePatch(2, data))
+	expect(t, r, 204, "")
 	after := loadCaseData(t, "case-a")
 	if after["steps"].(map[string]any)["2"].(map[string]any)["values"].(map[string]any)["school"] != "Test School" {
 		t.Fatalf("step 2 not saved: %v", after["steps"])
@@ -456,7 +489,7 @@ func TestStudentGuardInsideTheCaseDocument(t *testing.T) {
 	// An event attributed to someone else is refused.
 	data = loadCaseData(t, "case-a")
 	data["events"] = append([]any{map[string]any{"id": "e2", "at": "2026-09-04T00:00:00.000Z", "by": c.AppID, "byName": "Counsellor", "type": "student", "text": "forged"}}, data["events"].([]any)...)
-	r = upsert(t, "cases", s.Token, caseRow("case-a", "LPL-2026-0001", "open", c.AppID, s.AppID, 3, data))
+	r = patch(t, "cases", "id=eq.case-a", s.Token, casePatch(3, data))
 	expect(t, r, 400, "Events must be recorded as yourself")
 }
 
@@ -476,13 +509,13 @@ func TestGateDecisionNeedsGateWrite(t *testing.T) {
 		gate["decidedBy"] = by.AppID
 		return data
 	}
-	r := upsert(t, "cases", c.Token, caseRow("case-a", "LPL-2026-0001", "open", c.AppID, s.AppID, 2, decide(c)))
+	r := patch(t, "cases", "id=eq.case-a", c.Token, casePatch(2, decide(c)))
 	expect(t, r, 400, "Gate decisions require the gate.write permission")
 	if r.Header.Get("Content-Type") != "application/json; charset=utf-8" {
 		t.Fatalf("content-type %q", r.Header.Get("Content-Type"))
 	}
-	r = upsert(t, "cases", tl.Token, caseRow("case-a", "LPL-2026-0001", "open", c.AppID, s.AppID, 2, decide(tl)))
-	expect(t, r, 201, "")
+	r = patch(t, "cases", "id=eq.case-a", tl.Token, casePatch(2, decide(tl)))
+	expect(t, r, 204, "")
 	if loadCaseData(t, "case-a")["gates"].([]any)[0].(map[string]any)["status"] != "approved" {
 		t.Fatal("gate not approved")
 	}
@@ -492,7 +525,7 @@ func TestAuditRowsAreAttributedByTheDatabase(t *testing.T) {
 	reset(t)
 	admin := bootstrapAdmin(t)
 	s := provision(t, "student", "s@test.local", "Student")
-	r := upsert(t, "audit", s.Token, `[{"id":"a1","at":"2020-01-01T00:00:00.000Z","actor_id":"forged","actor_name":"Forged","actor_role":"admin","action":"Profile submitted","target":"LPL-2026-0001","detail":null}]`)
+	r := insert(t, "audit", s.Token, `[{"id":"a1","at":"2020-01-01T00:00:00.000Z","actor_id":"forged","actor_name":"Forged","actor_role":"admin","action":"Profile submitted","target":"LPL-2026-0001","detail":null}]`)
 	expect(t, r, 201, "")
 	r = call(t, http.MethodGet, "/rest/v1/audit?select=*&order=at.desc&limit=600", admin.Token, "", nil)
 	expect(t, r, 200, "")
@@ -586,7 +619,7 @@ func TestOwnProfileTouchAndSilentDelete(t *testing.T) {
 	}
 	// A student may not change their own role: the guard trigger refuses.
 	r = call(t, http.MethodPatch, "/rest/v1/app_users?id=eq."+s.AppID, s.Token, `{"role":"admin"}`, map[string]string{"Prefer": "return=minimal"})
-	expect(t, r, 400, "Only an administrator may manage administrator profiles")
+	expect(t, r, 400, "You cannot change your own role or activation state")
 
 	// Without case.delete, DELETE matches no rows and answers 204, as under PostgREST.
 	r = call(t, http.MethodDelete, "/rest/v1/cases?id=eq.case-a", c.Token, "", map[string]string{"Prefer": "return=minimal"})
@@ -606,12 +639,149 @@ func TestContractTablesMatchTheCatalogue(t *testing.T) {
 		system(t, func(ctx context.Context, ex db.Executor) error {
 			return ex.QueryRow(ctx, "select coalesce(array_agg(column_name::text order by ordinal_position), '{}') from information_schema.columns where table_schema = 'public' and table_name = $1::text", name).Scan(&cols)
 		})
-		want := make([]string, len(tb.Columns))
-		for i, c := range tb.Columns {
-			want[i] = c.Name
+		want := make([]string, 0, len(tb.Columns)+len(tb.Internal))
+		for _, c := range tb.Columns {
+			want = append(want, c.Name)
 		}
+		want = append(want, tb.Internal...)
 		if strings.Join(cols, ",") != strings.Join(want, ",") {
 			t.Errorf("%s: catalogue %v, contract %v", name, cols, want)
 		}
 	}
+}
+
+// ---------- v6 write path ----------
+
+// Every role writes the rows it is entitled to with the statements the client now sends.
+// Under v5's upserts each of these was refused by the insert/select policies or the
+// BEFORE INSERT guard even though the caller held the right permission.
+func TestEveryRoleCanWriteWhatItShould(t *testing.T) {
+	reset(t)
+	bootstrapAdmin(t)
+	c := provision(t, "counsellor", "c@test.local", "Counsellor")
+	s := provision(t, "student", "s@test.local", "Student")
+	insertCase(t, "case-a", "LPL-2026-0001", c.AppID, s.AppID)
+
+	for i, who := range []identity{c, s} {
+		r := insert(t, "audit", who.Token, fmt.Sprintf(`[{"id":"w%d","at":"2026-09-01T00:00:00.000Z","actor_id":"x","actor_name":"x","actor_role":"x","action":"Signed in","target":null,"detail":null}]`, i))
+		expect(t, r, 201, "")
+	}
+	// Own profile: contact details, no permission needed beyond being the owner.
+	expect(t, patch(t, "app_users", "id=eq."+c.AppID, c.Token, `{"phone":"0771234567"}`), 204, "")
+	expect(t, patch(t, "app_users", "id=eq."+s.AppID, s.Token, `{"name":"Student Renamed"}`), 204, "")
+	// Someone else's profile: row-level security hides the row from the update, so nothing
+	// changes (PostgREST answers 204 for a PATCH that matched nothing; the UI never offers it).
+	expect(t, patch(t, "app_users", "id=eq."+s.AppID, c.Token, `{"name":"Hijacked"}`), 204, "")
+	var name string
+	system(t, func(ctx context.Context, ex db.Executor) error {
+		return ex.QueryRow(ctx, "select name from public.app_users where id = $1::text", s.AppID).Scan(&name)
+	})
+	if name != "Student Renamed" {
+		t.Fatalf("another counsellor renamed the student: %q", name)
+	}
+	// A student saves their own case document through save_case.
+	data := loadCaseData(t, "case-a")
+	data["steps"].(map[string]any)["2"].(map[string]any)["values"] = map[string]any{"fullName": "Test Student", "school": "Royal"}
+	expect(t, saveCase(t, s.Token, "case-a", 2, data), 200, "2")
+}
+
+// save_case reports a save that matched nothing instead of answering success.
+func TestSaveCaseReportsNothingSaved(t *testing.T) {
+	reset(t)
+	bootstrapAdmin(t)
+	c := provision(t, "counsellor", "c@test.local", "Counsellor")
+	c2 := provision(t, "counsellor", "c2@test.local", "Counsellor Two")
+	insertCase(t, "case-a", "LPL-2026-0001", c.AppID, "")
+	expect(t, saveCase(t, c2.Token, "case-a", 2, loadCaseData(t, "case-a")), 404, "no longer exists")
+	expect(t, saveCase(t, c.Token, "case-zz", 2, loadCaseData(t, "case-a")), 404, "")
+	expect(t, saveCase(t, c.Token, "case-a", 2, loadCaseData(t, "case-a")), 200, "")
+	expect(t, saveCase(t, c.Token, "case-a", 2, loadCaseData(t, "case-a")), 409, "changed by someone else")
+}
+
+func TestStaleRevisionIsRefused(t *testing.T) {
+	reset(t)
+	bootstrapAdmin(t)
+	c := provision(t, "counsellor", "c@test.local", "Counsellor")
+	insertCase(t, "case-a", "LPL-2026-0001", c.AppID, "")
+
+	first := loadCaseData(t, "case-a")
+	second := loadCaseData(t, "case-a")
+	first["status"] = "hold"
+	expect(t, patch(t, "cases", "id=eq.case-a", c.Token, casePatch(2, first)), 204, "")
+	// The second writer started from revision 1 as well: refused, nothing written.
+	second["status"] = "deferred"
+	r := patch(t, "cases", "id=eq.case-a", c.Token, casePatch(2, second))
+	expect(t, r, 409, "changed by someone else")
+	if !strings.Contains(r.Body, `"hint":"stale_revision"`) {
+		t.Fatalf("stale refusal must carry the hint: %s", r.Body)
+	}
+	// Skipping ahead is refused too.
+	expect(t, patch(t, "cases", "id=eq.case-a", c.Token, casePatch(9, loadCaseData(t, "case-a"))), 409, "")
+	after := loadCaseData(t, "case-a")
+	if after["status"] != "hold" || after["rev"].(float64) != 2 {
+		t.Fatalf("status %v rev %v, want hold and 2", after["status"], after["rev"])
+	}
+}
+
+// The columns row-level security reads are derived from the document; a payload cannot
+// set them to something the document does not say.
+func TestDerivedColumnsFollowTheDocument(t *testing.T) {
+	reset(t)
+	bootstrapAdmin(t)
+	c := provision(t, "counsellor", "c@test.local", "Counsellor")
+	s := provision(t, "student", "s@test.local", "Student")
+	other := provision(t, "student", "o@test.local", "Other Student")
+	insertCase(t, "case-a", "LPL-2026-0001", c.AppID, s.AppID)
+
+	data := loadCaseData(t, "case-a")
+	data["rev"] = 2
+	body, _ := json.Marshal(map[string]any{"rev": 2, "data": data, "student_user_id": other.AppID, "status": "completed"})
+	expect(t, patch(t, "cases", "id=eq.case-a", c.Token, string(body)), 204, "")
+	var student, status string
+	system(t, func(ctx context.Context, ex db.Executor) error {
+		return ex.QueryRow(ctx, "select student_user_id, status from public.cases where id = 'case-a'").Scan(&student, &status)
+	})
+	if student != s.AppID || status != "open" {
+		t.Fatalf("columns must follow the document: student %s status %s", student, status)
+	}
+	// The other student still cannot see the case.
+	r := call(t, http.MethodGet, "/rest/v1/cases?select=*", other.Token, "", nil)
+	expect(t, r, 200, "")
+	if n := len(rowsOf(t, r.Body)); n != 0 {
+		t.Fatalf("forged link leaked the case: %d rows", n)
+	}
+	// A document whose identity disagrees with the row is refused.
+	data = loadCaseData(t, "case-a")
+	data["id"] = "case-b"
+	expect(t, patch(t, "cases", "id=eq.case-a", c.Token, casePatch(3, data)), 400, "Case identity")
+}
+
+func TestCaseInsertFollowsScope(t *testing.T) {
+	reset(t)
+	bootstrapAdmin(t)
+	c := provision(t, "counsellor", "c@test.local", "Counsellor")
+	c2 := provision(t, "counsellor", "c2@test.local", "Counsellor Two")
+	mk := func(id, counsellor string) string {
+		var doc map[string]any
+		_ = json.Unmarshal([]byte(caseJSON(id, "LPL-2026-00"+id[len(id)-2:], counsellor, "")), &doc)
+		b, _ := json.Marshal([]map[string]any{{"id": id, "ref": doc["ref"], "rev": 1, "data": doc}})
+		return string(b)
+	}
+	expect(t, insert(t, "cases", c.Token, mk("case-01", c.AppID)), 201, "")
+	expect(t, insert(t, "cases", c.Token, mk("case-02", c2.AppID)), 403, "")
+	expect(t, insert(t, "cases", c.Token, mk("case-01", c.AppID)), 409, "")
+}
+
+// org_config is one document; each top-level key answers to its own permission, and a save
+// that changes only processors needs only dataprotection.write.
+func TestOrgConfigKeysAnswerToTheirOwnCell(t *testing.T) {
+	reset(t)
+	bootstrapAdmin(t)
+	tl := provision(t, "team_leader", "tl@test.local", "Team Leader")
+	system(t, func(ctx context.Context, ex db.Executor) error {
+		_, err := ex.Exec(ctx, `update public.org_config set config = '{"orgName":"LPL","sla":{"cisDays":7}}'::jsonb where id = 'org'`)
+		return err
+	})
+	expect(t, patch(t, "org_config", "id=eq.org", tl.Token, `{"config":{"orgName":"LPL","sla":{"cisDays":7},"processors":[{"id":"p1","name":"Host"}]}}`), 204, "")
+	expect(t, patch(t, "org_config", "id=eq.org", tl.Token, `{"config":{"orgName":"LPL","sla":{"cisDays":3},"processors":[{"id":"p1","name":"Host"}]}}`), 400, "requires the settings.write permission")
 }

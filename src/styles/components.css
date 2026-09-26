@@ -1,4 +1,4 @@
-/*! Lyceum Placements - Placement Management System | Copyright (c) 2026 Bhanu Mendis. All rights reserved. | Author: Bhanu Mendis, Group IT, Lyceum Global Holdings */
+/*! Lyceum Placements - Placement Management System | Developed by Bhanu Mendis - Group IT */
 /* v5 design-system primitives. Three tiers of depth:
    ground   — the page itself (no box)
    surface  — solid content panels, hairline border, one level of shadow
@@ -23,18 +23,30 @@
   animation: layer-in var(--d-2) var(--ease-out) both;
   max-height: min(78vh, 720px); display: flex; flex-direction: column; overflow: hidden;
 }
-.layer-scrim { position: fixed; inset: 0; z-index: var(--z-popover); background: var(--scrim); animation: fade var(--d-2) ease both; }
+.layer-scrim { position: fixed; inset: 0; z-index: var(--z-popover); background: var(--scrim); animation: fade var(--d-2) var(--ease-out) both; }
 @keyframes layer-in { from { opacity: 0; transform: scale(0.96) translateY(-4px); } to { opacity: 1; transform: none; } }
-.sheet-scrim { position: fixed; inset: 0; z-index: var(--z-sheet); background: var(--scrim); display: flex; align-items: flex-end; animation: fade var(--d-2) ease both; }
+@keyframes layer-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(0.97) translateY(-4px); } }
+.sheet-scrim { position: fixed; inset: 0; z-index: var(--z-sheet); background: var(--scrim); display: flex; align-items: flex-end; animation: fade var(--d-2) var(--ease-out) both; }
+/* The sheet runs 40px past the bottom of the screen, so pulling it up (it rubber-bands, see
+   src/lib/ui/layer.tsx) shows more sheet rather than a gap. */
 .sheet {
-  width: 100%; max-height: 88vh; max-height: 88dvh; border-radius: 22px 22px 0 0; border-bottom: 0; outline: none;
-  display: flex; flex-direction: column; overflow: hidden; padding-bottom: env(safe-area-inset-bottom);
-  animation: sheet var(--d-3) var(--ease-out) both;
+  --sheet-overscroll: 40px;
+  width: 100%; max-height: calc(88vh + var(--sheet-overscroll)); max-height: calc(88dvh + var(--sheet-overscroll));
+  margin-bottom: calc(-1 * var(--sheet-overscroll)); padding-bottom: calc(env(safe-area-inset-bottom) + var(--sheet-overscroll));
+  border-radius: 22px 22px 0 0; border-bottom: 0; outline: none;
+  display: flex; flex-direction: column; overflow: hidden;
+  animation: sheet var(--d-3) var(--ease-out) backwards;
+  /* Let go short of dismissing, it springs home: the one place momentum earns an overshoot. */
+  transition: transform var(--d-3) var(--spring);
 }
 .sheet-grip { flex-shrink: 0; padding: 8px 0 6px; cursor: grab; touch-action: none; }
 .sheet-grip:active { cursor: grabbing; }
 .sheet-handle { width: 40px; height: 4px; border-radius: 2px; background: var(--hair2); margin: 2px auto; }
-.sheet { transition: transform var(--d-2) cubic-bezier(0.2, 0.8, 0.2, 1); }
+/* Leaving (src/lib/ui/presence.ts). A sheet that was thrown keeps the throw (an inline
+   transition from the drag) instead of restarting from its resting place. */
+.layer.is-leaving { animation: layer-out var(--d-1) var(--ease-in) both; pointer-events: none; }
+:is(.layer-scrim, .sheet-scrim).is-leaving { animation: fade-out var(--d-2) var(--ease-in) both; pointer-events: none; }
+.sheet-scrim.is-leaving .sheet:not([data-thrown]) { animation: sheet-out var(--d-2) var(--ease-in) both; }
 .layer-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--surface-border); flex-shrink: 0; }
 .layer-h h2 { font-size: 15px; }
 .layer-b { overflow-y: auto; overscroll-behavior: contain; padding: 8px; min-height: 0; }
@@ -42,7 +54,7 @@
 .tooltip {
   position: fixed; z-index: var(--z-toast); transform: translateX(-50%); padding: 6px 10px; border-radius: 10px;
   font: 500 12.5px var(--ui); color: var(--ink); white-space: nowrap; pointer-events: none;
-  display: inline-flex; align-items: center; gap: 8px; animation: fade var(--d-1) ease both;
+  display: inline-flex; align-items: center; gap: 8px; animation: fade var(--d-1) var(--ease-out) both;
 }
 .tooltip.right { transform: translateY(-50%); }
 .tooltip kbd { font: 600 11px var(--mono); padding: 1px 6px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--surface-border); color: var(--muted); }
@@ -58,6 +70,7 @@ html[data-theme="dark"] .skeleton::after { background: linear-gradient(90deg, tr
 .sk-block { display: block; border-radius: var(--r-lg); }
 .sk-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
 .sk-pad { padding: 14px 18px; }
+.page-footer { padding: 12px 4px 4px; }
 .sk-hero { display: flex; gap: 20px; align-items: center; }
 .sk-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .sk-cols.wide { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
@@ -115,7 +128,7 @@ html[data-theme="dark"] .skeleton::after { background: linear-gradient(90deg, tr
 
 /* ---------- segmented switch ---------- */
 .segmented { display: inline-flex; gap: 2px; padding: 3px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--surface-border); max-width: 100%; overflow-x: auto; }
-.seg-opt { min-height: 44px; padding: 0 14px; border-radius: 9px; font: 500 13.5px var(--ui); color: var(--muted); display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent; white-space: nowrap; transition: background var(--d-2) var(--ease-out), color var(--d-1); }
+.seg-opt { min-height: 44px; padding: 0 14px; border-radius: 9px; font: 500 13.5px var(--ui); color: var(--muted); display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent; white-space: nowrap; transition: background var(--d-2) var(--ease-out), color var(--d-1), transform var(--d-2) var(--spring); }
 .segmented.sm .seg-opt { padding: 0 10px; font-size: 12.5px; }
 .seg-opt:hover { color: var(--ink); }
 .seg-opt[aria-checked="true"] { background: var(--glass-solid); color: var(--ink); font-weight: 600; border-color: var(--accent-line); box-shadow: var(--e-1); }
@@ -190,3 +203,27 @@ html[data-theme="dark"] .skeleton::after { background: linear-gradient(90deg, tr
 /* ---------- notification settings ---------- */
 .device-row { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--surface-border); }
 .ml1 { margin-left: 6px; }
+
+/* Role choices (change-role dialog): one selectable card per role, description beneath. */
+.role-choices { display: grid; gap: var(--s-2); border: 0; padding: 0; margin: 0; }
+.role-choice { display: flex; align-items: flex-start; gap: var(--s-3); padding: var(--s-3) var(--s-4); border: 1px solid var(--hair2); border-radius: var(--r-md); cursor: pointer; min-height: 44px; transition: border-color var(--d-1), background var(--d-1); }
+.role-choice > span { display: grid; gap: 2px; }
+.role-choice input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--accent); flex-shrink: 0; }
+.role-choice:hover { border-color: var(--accent-line); }
+.role-choice.on { border-color: var(--accent); background: var(--accent-soft); }
+.role-choice.disabled { opacity: 0.55; cursor: not-allowed; }
+@media (forced-colors: active) { .role-choice.on { outline: 2px solid Highlight; } }
+
+/* ---------- stat strip: desktop scale (v6 responsive pass) ---------- */
+/* The four-tile strip owns the full page width on every staff home; from 1280px its type
+   and padding step up so a 320px tile is not a phone card with dead space beside it. The
+   compact side-column strip keeps its scale. */
+@media (min-width: 1280px) {
+  .stat-strip:not(.compact) .stat { padding: 18px 22px; gap: 6px; }
+  .stat-strip:not(.compact) .stat + .stat::before { top: 18px; bottom: 18px; }
+  .stat-strip:not(.compact) .stat.hued::after { left: 22px; }
+  .stat-strip:not(.compact) .stat-label { font-size: 13.5px; }
+  .stat-strip:not(.compact) .stat-value { font-size: 36px; }
+  .stat-strip:not(.compact) .stat-delta,
+  .stat-strip:not(.compact) .stat-sub { font-size: 12.5px; }
+}

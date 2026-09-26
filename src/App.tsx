@@ -1,7 +1,6 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Moon, Sun } from "lucide-react";
@@ -12,7 +11,7 @@ import { EVENTS, type AuditEvent } from "@/lib/audit";
 import { runViewTransition } from "@/lib/motion";
 import type { CaseRecord, Permission, User } from "@/lib/types";
 import { ToastProvider, useToast } from "@/lib/ui";
-import { BRAND_LOGO, COPYRIGHT, ORG_SHORT, PRODUCT } from "@/lib/brand";
+import { BRAND_LOGO, ATTRIBUTION, ORG_SHORT, PRODUCT } from "@/lib/brand";
 import { AuthScreen } from "@/views/Auth";
 import { AppShell } from "@/shell/AppShell";
 import { ShellSkeleton } from "@/shell/ShellSkeleton";
@@ -26,8 +25,8 @@ export interface SessionCtx {
   users: Record<string, User>;
   cases: Record<string, CaseRecord>;
   can: (p: Permission) => boolean;
-  /** True only for the Administrator role. Used for features that no configuration can open to other roles. */
-  isAdmin: boolean;
+  /** True only for SUPER ADMIN (Group IT). Used for features no configuration can open to other roles. */
+  isSuperAdmin: boolean;
   route: Route;
   go: (r: Route) => void;
   signIn: (u: User) => void;
@@ -120,7 +119,7 @@ export default function App() {
   useEffect(() => { store.setCurrentUser(user ? user.id : null); return () => store.setCurrentUser(null); }, [user]);
 
   const can = useCallback((p: Permission) => canFn(snap.org.config, user, p), [snap.org.config, user]);
-  const isAdmin = !!user && user.active && user.role === "admin";
+  const isSuperAdmin = !!user && user.active && user.role === "super_admin";
   const go = useCallback((r: Route) => {
     const h = toHash(r);
     if (r.page === "case") {
@@ -130,7 +129,9 @@ export default function App() {
     } else if (window.location.hash === h) setRoute(r); else window.location.hash = h;
     window.scrollTo({ top: 0, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }, []);
-  const signIn = useCallback((u: User) => { void store.audit(EVENTS.sessionSignIn(u), u).catch(() => undefined); setUserId(u.id); writeSession(u.id); window.location.hash = "#/"; setRoute({ page: "home" }); }, []);
+  // Signing in or out swaps the whole screen: the new one starts at its top, not at the offset
+  // the form was scrolled to (on a phone held sideways, the Sign in button sits below the fold).
+  const signIn = useCallback((u: User) => { void store.audit(EVENTS.sessionSignIn(u), u).catch(() => undefined); setUserId(u.id); writeSession(u.id); window.location.hash = "#/"; setRoute({ page: "home" }); window.scrollTo(0, 0); }, []);
   const signOut = useCallback(() => {
     // Revoke this device's push subscription (best effort, while the token is still valid), then end the session.
     const uid = user?.id;
@@ -140,7 +141,7 @@ export default function App() {
       try { const endpoint = await unsubscribeThisDevice(); if (endpoint && uid) await store.revokePushSubscription(endpoint, uid); } catch { /* best effort */ }
       finally { void store.server?.signOut(); }
     })();
-    setUserId(null); writeSession(null); window.location.hash = "#/"; setRoute({ page: "home" });
+    setUserId(null); writeSession(null); window.location.hash = "#/"; setRoute({ page: "home" }); window.scrollTo(0, 0);
   }, [user]);
   const audit = useCallback(async (event: AuditEvent) => {
     if (!user) return;
@@ -148,7 +149,7 @@ export default function App() {
   }, [user]);
   const toggleTheme = useCallback(() => setTheme((t) => (t === "dark" ? "light" : "dark")), []);
 
-  const value = useMemo<SessionCtx>(() => ({ snap, user, users: snap.org.users, cases: snap.cases.cases, can, isAdmin, route, go, signIn, signOut, audit, theme, toggleTheme }), [snap, user, can, isAdmin, route, go, signIn, signOut, audit, theme, toggleTheme]);
+  const value = useMemo<SessionCtx>(() => ({ snap, user, users: snap.org.users, cases: snap.cases.cases, can, isSuperAdmin, route, go, signIn, signOut, audit, theme, toggleTheme }), [snap, user, can, isSuperAdmin, route, go, signIn, signOut, audit, theme, toggleTheme]);
 
   return (
     <ToastProvider>
@@ -156,6 +157,8 @@ export default function App() {
       <Ctx.Provider value={value}>
         {!snap.loaded ? (
           <ShellSkeleton />
+        ) : snap.backend === "unconfigured" ? (
+          <NotConnected />
         ) : !user ? (
           <AuthScreen />
         ) : (
@@ -163,6 +166,23 @@ export default function App() {
         )}
       </Ctx.Provider>
     </ToastProvider>
+  );
+}
+
+/**
+ * A production build that was not given its server. Records are never kept in the browser
+ * instead, so there is nothing to sign in to; the screen says so and who can fix it.
+ */
+function NotConnected() {
+  useEffect(() => { document.title = `Not connected — ${ORG_SHORT}`; }, []);
+  return (
+    <main className="loading" id="main">
+      <div className="panel" style={{ maxWidth: 520, padding: "26px 28px" }}>
+        <Wordmark size="sm" />
+        <h1 className="mt4" style={{ fontSize: 22 }}>This installation is not connected to its server</h1>
+        <p className="muted mt2">The Placement Management System keeps every record on its server, so it cannot be used until that connection is configured. Please contact Group IT.</p>
+      </div>
+    </main>
   );
 }
 
@@ -186,8 +206,8 @@ export function Wordmark({ size = "md", sub = true, stacked = false }: { size?: 
   );
 }
 
-export function Copyright({ className = "" }: { className?: string }) {
-  return <span className={`ui xs muted ${className}`}>{COPYRIGHT}</span>;
+export function Attribution({ className = "" }: { className?: string }) {
+  return <span className={`ui xs muted ${className}`}>{ATTRIBUTION}</span>;
 }
 
 export function LiveBadge() {
@@ -197,6 +217,7 @@ export function LiveBadge() {
   const age = Math.round((Date.now() - Math.max(store.syncedAt, snap.syncedAt)) / 1000);
   const stale = (snap.backend === "shared" || snap.backend === "server") && age > 30;
   const label = snap.error ? "Sync error"
+    : snap.backend === "unconfigured" ? "Not connected"
     : snap.backend === "server" ? "Live · server"
     : snap.backend === "shared" ? "Live · shared workspace"
     : snap.backend === "local" ? "Saved in this browser" : "Session only";

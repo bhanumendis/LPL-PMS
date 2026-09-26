@@ -1,0 +1,21 @@
+# Lyceum Placements — Placement Management System
+# Copyright © Bhanu Mendis - LGH IT
+#
+# Secret scanning (CI: gitleaks over the full history). The default rules apply; the allowlist
+# names exact test placeholders — descriptive strings and environment reads that the generic
+# rule mistakes for keys — never whole files, so a real key pasted into a test is still caught.
+title = "LPL PMS"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test placeholders, not credentials"
+regexTarget = "match"
+regexes = [
+  '''test-secret-with-at-least-32-characters''',
+  '''integration-test-secret-at-least-32-characters''',
+  '''ci-only-secret-with-at-least-32-characters''',
+  '''env\.LPL_E2E_[A-Z_]+''',
+  '''auth_id=eq\.7e1e1a2c-1b7f-4a3e-9c1d-0a1b2c3d4e5f''',
+]

@@ -1,0 +1,453 @@
+# Lyceum Placements — Placement Management System
+# Copyright © Bhanu Mendis - LGH IT
+#
+# The release pipeline. Every push and pull request runs the quality gates, including a
+# rehearsal of the API deploy (the image built, promoted, run in production mode and smoke-tested,
+# the schema gate and the rollback exercised). A push to main that passes every gate deploys:
+# the deploy jobs `need` all of them, so there is no path to production around a red check. A
+# failed API smoke test rolls the API back; a failed web smoke test redeploys the last good web
+# release. Environments, variables, secrets, rollback and migrations: docs/OPERATIONS.md.
+name: CI
+
+on:
+  # Pull requests run the gates on their branch; pushes to main run them again and deploy.
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  web:
+    name: Web · types, lint, unit, contrast, build, budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Typecheck (browser, service worker, Node)
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Unit and component tests
+        run: npm test
+      - name: Contrast (every token pair at its target)
+        run: npm run contrast
+      - name: schema.sql is generated from the migrations
+        run: node scripts/build-schema.mjs --check
+      - name: Parity fixture matches the TypeScript reference
+        run: npm run parity:update && git diff --exit-code -- server/test/integration/testdata/
+      - name: Attribution
+        run: node scripts/check-attribution.mjs
+      - name: No dependency (development tooling included) has a known high or critical vulnerability
+        run: npm audit --audit-level=high
+      - name: Production build
+        env:
+          VITE_API_URL: https://api.example.invalid
+          VITE_API_ANON_KEY: ci-placeholder-anon-key
+        run: npx vite build && node scripts/finalize.mjs
+      - name: Bundle budget
+        run: node scripts/check-bundle.mjs
+
+  server:
+    name: Server · format, vet, staticcheck, govulncheck, unit and integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+      TEST_JWT_SECRET: ci-only-secret-with-at-least-32-characters
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # go.mod pins the patched toolchain (toolchain directive); GOTOOLCHAIN=auto fetches it.
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Modules are tidy
+        run: go mod tidy -diff
+      - name: Formatted
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go build ./...
+      - run: go vet ./...
+      - name: Static analysis
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+      - name: Known vulnerabilities (reachable code, standard library included)
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+      - name: Unit, integration and migration tests
+        run: go test -race -count=1 ./...
+
+  e2e:
+    name: End to end · API client and browser (8 viewports + dark, axe)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      E2E_DATABASE_URL: postgres://postgres:postgres@localhost:5432/lpl_e2e?sslmode=disable
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Browser
+        run: npx playwright install --with-deps chromium
+      - name: Client against lpl-api
+        run: scripts/e2e-api.sh
+      - name: Every role, every release viewport
+        run: scripts/e2e-ui.sh
+        env:
+          E2E_UI_SUITES: pages
+      - name: Screenshots, report and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-${{ github.sha }}
+          path: |
+            test-results/
+            .e2e-lpl-api.log
+            .e2e-gotrue.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+  vitals:
+    name: Web Vitals · LCP, CLS and INP for every role (Lighthouse conditions)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      E2E_DATABASE_URL: postgres://postgres:postgres@localhost:5432/lpl_e2e?sslmode=disable
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Browser
+        run: npx playwright install --with-deps chromium
+      # On a runner of its own, one test at a time: what it times is the application alone.
+      - name: Core Web Vitals, one viewport per layout
+        run: scripts/e2e-ui.sh
+        env:
+          E2E_UI_SUITES: vitals
+      - name: Vitals tables, report and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vitals-${{ github.sha }}
+          path: |
+            test-results/
+            .e2e-lpl-api.log
+            .e2e-gotrue.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+  secrets:
+    name: Secret scan · full history
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.26"
+          cache: false
+      - name: gitleaks
+        run: |
+          go install github.com/zricethezav/gitleaks/v8@v8.18.4
+          "$(go env GOPATH)/bin/gitleaks" detect --source . --config .gitleaks.toml --redact --no-banner --verbose
+
+  pipeline:
+    name: Pipeline · actionlint, shellcheck, repository setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      # shellcheck is on the runner; actionlint runs it over every `run:` step as well.
+      - name: Workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Scripts
+        run: shellcheck scripts/*.sh scripts/lib/*.sh scripts/deploy/*.sh
+      - name: Repository setup script (dry run; every request body must be valid JSON)
+        run: scripts/deploy/configure-repo.sh --dry-run --repo "${{ github.repository }}" --reviewer octocat --api-url https://api.example.invalid --anon-key ci-placeholder-anon-key --no-secrets
+
+  rehearsal:
+    name: Image · build, scan, deploy rehearsal
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      registry:
+        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+        ports: ["5000:5000"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build, publish, promote, run in production mode, smoke test, schema gate, roll back
+        env:
+          REHEARSAL_DATABASE_URL: postgres://postgres:postgres@localhost:5432/lpl_rehearsal?sslmode=disable
+          REGISTRY: localhost:5000
+          REVISION: ${{ github.sha }}
+        run: scripts/deploy/rehearse.sh
+      - name: Image vulnerabilities (grype; high or critical with a fix available fails)
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: localhost:5000/lpl-api:sha-${{ github.sha }}
+          severity-cutoff: high
+          only-fixed: true
+          output-format: table
+      - name: lpl-api log
+        if: failure()
+        run: cat .rehearsal-lpl-api.log 2>/dev/null || true
+
+  # ------------------------------------------------------------------------------------------
+  # Deploy: main only, after every gate. Each target skips (and says so) until it is configured.
+  # ------------------------------------------------------------------------------------------
+
+  image:
+    name: Publish lpl-api image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [web, server, e2e, vitals, secrets, pipeline, rehearsal]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - id: name
+        run: echo "image=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/lpl-api" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: server
+          push: true
+          provenance: true
+          sbom: true
+          build-args: REVISION=${{ github.sha }}
+          tags: |
+            ${{ steps.name.outputs.image }}:sha-${{ github.sha }}
+            ${{ steps.name.outputs.image }}:main
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=lpl-api
+
+  deploy-api:
+    name: Deploy lpl-api (production)
+    needs: [image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: ${{ vars.API_URL }}
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: deploy-api
+      cancel-in-progress: false
+    env:
+      IMAGE: ${{ needs.image.outputs.image }}
+      API_URL: ${{ vars.API_URL }}
+      ANON_KEY: ${{ vars.VITE_API_ANON_KEY }}
+      DEPLOY_HOOK: ${{ secrets.API_DEPLOY_HOOK }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Configured?
+        id: cfg
+        run: |
+          if [ -z "$API_URL" ]; then
+            echo "::notice::API_URL is not set for the production environment; the image is published (sha-${{ github.sha }}) but not promoted."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.cfg.outputs.go == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - if: steps.cfg.outputs.go == 'true'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Remember what production runs now (the rollback target)
+        if: steps.cfg.outputs.go == 'true'
+        id: prev
+        run: |
+          prev=$(docker buildx imagetools inspect "$IMAGE:production" --format '{{json .Manifest}}' 2>/dev/null | jq -r '.digest // empty' || true)
+          echo "digest=$prev" >> "$GITHUB_OUTPUT"
+          echo "Previous production image: ${prev:-none}"
+      - name: Promote
+        if: steps.cfg.outputs.go == 'true'
+        run: scripts/deploy/promote.sh "$IMAGE:sha-${{ github.sha }}"
+      - name: Smoke test
+        if: steps.cfg.outputs.go == 'true'
+        id: smoke
+        run: scripts/deploy/smoke-api.sh
+      - name: Roll back to the previous image
+        if: failure() && steps.cfg.outputs.go == 'true' && steps.prev.outputs.digest != ''
+        run: |
+          echo "::error::Smoke test failed; restoring $IMAGE@${{ steps.prev.outputs.digest }}"
+          scripts/deploy/promote.sh "$IMAGE@${{ steps.prev.outputs.digest }}"
+          EXPECT_REVISION="" scripts/deploy/smoke-api.sh
+
+  deploy-web:
+    name: Deploy web application (GitHub Pages)
+    needs: [web, server, e2e, vitals, secrets, pipeline, rehearsal, deploy-api]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.VITE_API_URL != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: deploy-web
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Build for production
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_API_ANON_KEY: ${{ vars.VITE_API_ANON_KEY }}
+          LPL_CONNECT_SRC: ${{ vars.LPL_CONNECT_SRC }}
+        run: npx vite build && node scripts/finalize.mjs && node scripts/check-bundle.mjs
+      - name: Stage the site
+        run: |
+          mkdir -p site
+          cp dist/index.html dist/LPL_Placement_Management_System.html dist/sw.js site/
+          touch site/.nojekyll
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+      - name: Smoke test
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+        run: scripts/deploy/smoke-web.sh
+
+  # A web release that fails its smoke test is replaced by the last release that passed every
+  # gate on main (the rollback workflow, called; it refuses a commit whose CI did not pass).
+  rollback-target:
+    name: Find the last good web release
+    needs: [deploy-web]
+    if: failure() && needs.deploy-web.result == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      sha: ${{ steps.find.outputs.sha }}
+    steps:
+      - id: find
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          sha=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // empty')
+          if [ -z "$sha" ]; then echo "::warning::No earlier release passed every gate on main; nothing to roll back to."; fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  rollback-web:
+    name: Roll the web application back
+    needs: [rollback-target]
+    if: needs.rollback-target.outputs.sha != ''
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/rollback.yml
+    with:
+      sha: ${{ needs.rollback-target.outputs.sha }}
+      target: web
+    secrets: inherit

@@ -1,51 +1,78 @@
 /**
  * Lyceum Placements — Placement Management System
- * Copyright (c) 2026 Bhanu Mendis. All rights reserved.
- * Author: Bhanu Mendis, Group IT, Lyceum Global Holdings
+ * Developed by Bhanu Mendis - Group IT
  */
-import React, { useState } from "react";
-import { Plus, KeyRound, UserRoundX, UserRoundCheck, Download } from "lucide-react";
+import React, { useMemo, useState } from "react";
+import { Plus, KeyRound, UserRoundX, UserRoundCheck, Download, ShieldCheck, Search } from "lucide-react";
 import { useSession } from "@/App";
 import { store, uid, nowIso, hashPassword, passwordProblem } from "@/lib/store";
-import { ROLE_LABEL, ROLES } from "@/lib/rbac";
-import { Modal, Notice, useToast, Pill, Avatar, EmptyState, TextField, SelectField, PageHeader, StatStrip, CardList } from "@/lib/ui";
-import { BP, useMediaQuery } from "@/lib/hooks";
+import { ROLE_LABEL, ROLES, assignableRoles, canManageAccount, isGroupItEmail, isPrivileged } from "@/lib/rbac";
+import { Modal, Notice, useToast, Pill, Avatar, EmptyState, TextField, SelectField, PageHeader, StatStrip, CardList, FilterBar, ListSkeleton, ReadError, PageFooter } from "@/lib/ui";
+import { BP, SEARCH_MIN, useDebounced, useMediaQuery } from "@/lib/hooks";
+import { useDashboard, useUsersPage } from "@/lib/useRead";
 import { fmtDateTime } from "@/lib/logic";
 import { Donut, Legend } from "@/lib/charts";
 import type { Role, User } from "@/lib/types";
 import { EVENTS } from "@/lib/audit";
-
-/** Shown beside an admin-users failure when the Edge Function is not on the project yet. */
-const NOT_DEPLOYED_HINT = "Deploy the admin-users function (supabase/functions/admin-users) to issue sign-ins from here.";
+import { NOT_DEPLOYED_HINT } from "@/lib/server";
+import { ChangeRoleDialog } from "./ChangeRole";
 
 export function StaffPage() {
-  const { users, user, cases, audit, snap, can } = useSession();
+  const { users, user, audit, snap, can, go } = useSession();
   const phone = useMediaQuery(BP.mobile);
   const toast = useToast();
   const [tab, setTab] = useState<"staff" | "students">("staff");
   const [creating, setCreating] = useState(false);
   const [passwordFor, setPasswordFor] = useState<User | null>(null);
+  const [roleFor, setRoleFor] = useState<User | null>(null);
+  const [q, setQ] = useState("");
   const canWrite = can("staff.write");
   const canAccount = can("account.write");
   const canDeactivate = can("account.delete");
-  const list = Object.values(users).filter((u) => (tab === "staff" ? u.role !== "student" : u.role === "student")).sort((a, b) => a.name.localeCompare(b.name));
-  const staff = Object.values(users).filter((u) => u.role !== "student");
+  // Staff are few and held by the session; student profiles grow with the caseload and are
+  // read a page at a time from the server.
+  const staff = useMemo(() => Object.values(users).filter((u) => u.role !== "student").sort((a, b) => a.name.localeCompare(b.name)), [users]);
+  const term = useDebounced(q.trim(), 250);
+  const students = useUsersPage(tab === "students" ? { role: "student", ...(term.length >= SEARCH_MIN ? { q: term } : {}) } : null);
+  const dash = useDashboard(tab === "staff");
+  const openLoad = useMemo(() => new Map((dash.data?.counsellors ?? []).map((x) => [x.id, x.open])), [dash.data]);
+  const list: (User & { caseId?: string | null; caseRef?: string | null })[] = tab === "staff" ? staff : students.rows;
   const byRole = ROLES.filter((r) => r.id !== "student").map((r) => ({ label: r.label, n: staff.filter((u) => u.role === r.id && u.active).length })).filter((x) => x.n > 0);
+  const searchId = React.useId();
+
+  /** What the signed-in user may do to this account; administrator accounts belong to Super Admin. */
+  const acts = (u: User) => {
+    const manage = canManageAccount(user, u) && u.id !== user?.id;
+    return { password: canAccount && canManageAccount(user, u), active: canDeactivate && manage, role: canWrite && manage };
+  };
 
   const toggle = async (u: User) => {
-    if (!user || u.id === user.id || !canDeactivate) return;
+    if (!user || !acts(u).active) return;
     const next = !u.active;
     const server = store.server;
     /** The profile flag is always written; on a server the identity itself is also blocked or unblocked. */
     let warn: string | null = null;
-    if (server) {
-      const r = await server.setSignInActive(u.id, next);
-      if (!r.ok) warn = r.notDeployed ? `Profile updated. Deploy the admin-users function to also ${next ? "unblock" : "block"} the sign-in itself.` : `Profile updated. The sign-in itself was not changed: ${r.error}`;
-    }
-    await store.mutateOrg((o) => { if (o.users[u.id]) o.users[u.id].active = next; return o; });
-    await audit(EVENTS.accountActive(u, next, warn ? "Profile only; sign-in unchanged" : undefined));
-    if (warn) toast(warn, "warn"); else toast(`${u.name} ${next ? "reactivated" : "deactivated"}`);
+    try {
+      if (server) {
+        const r = await server.setSignInActive(u.id, next);
+        if (!r.ok) warn = r.notDeployed ? `Profile updated. Deploy the admin-users function to also ${next ? "unblock" : "block"} the sign-in itself.` : `Profile updated. The sign-in itself was not changed: ${r.error}`;
+      }
+      await store.mutateUser(u.id, (x) => { x.active = next; });
+      await audit(EVENTS.accountActive(u, next, warn ? "Profile only; sign-in unchanged" : undefined));
+      if (warn) toast(warn, "warn"); else toast(`${u.name} ${next ? "reactivated" : "deactivated"}`);
+    } catch { /* reported by the store */ }
   };
+
+  const exportCsv = () => {
+    const rows = [["Name", "Role", "Email", "Phone", "Branch", "Status", "Last sign-in"], ...staff.map((u) => [u.name, ROLE_LABEL[u.role], u.email, u.phone ?? "", u.branch ?? "", u.active ? "Active" : "Deactivated", u.lastSignInAt ?? ""])];
+    const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); a.download = "lpl-staff.csv"; a.click();
+    void audit(EVENTS.staffExported());
+  };
+
+  const caseCell = (u: User & { caseId?: string | null; caseRef?: string | null }) => (tab === "staff"
+    ? (openLoad.get(u.id) ?? 0)
+    : u.caseId ? <button type="button" className="row-btn" onClick={() => go({ page: "case", caseId: u.caseId! })}>{u.caseRef}</button> : "—");
 
   return (
     <div className="stack">
@@ -53,7 +80,7 @@ export function StaffPage() {
         title="Staff"
         context={<>Profiles, roles and access for {snap.org.config.orgName}.</>}
         actions={<>
-          {can("staff.download") && <button type="button" className="btn btn-secondary" onClick={() => { const rows = [["Name","Role","Email","Phone","Branch","Status","Last sign-in"], ...Object.values(users).map((u) => [u.name, ROLE_LABEL[u.role], u.email, u.phone ?? "", u.branch ?? "", u.active ? "Active" : "Deactivated", u.lastSignInAt ?? ""])]; const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n"); const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); a.download = "lpl-staff.csv"; a.click(); void audit(EVENTS.staffExported()); }}><Download aria-hidden />Export CSV</button>}
+          {can("staff.download") && <button type="button" className="btn btn-secondary" onClick={exportCsv}><Download aria-hidden />Export staff CSV</button>}
           {canWrite && <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}><Plus aria-hidden />Create a profile</button>}
         </>}
       />
@@ -61,82 +88,86 @@ export function StaffPage() {
         { id: "active", label: "Active staff", value: staff.filter((u) => u.active).length, sub: `${staff.filter((u) => !u.active).length} deactivated` },
         { id: "couns", label: "Counsellors", value: staff.filter((u) => u.role === "counsellor" && u.active).length, sub: "case owners" },
         { id: "tl", label: "Team Leaders", value: staff.filter((u) => u.role === "team_leader" && u.active).length, tone: "info", sub: "approval authority" },
-        { id: "students", label: "Student profiles", value: Object.values(users).filter((u) => u.role === "student").length, sub: "created from a case" },
+        { id: "admins", label: "Administrators", value: staff.filter((u) => isPrivileged(u.role) && u.active).length, sub: "Admin and Super Admin" },
       ]} />
-      <div className="grid grid-3 stagger">
-        <div className="span2 stack">
+      <div className="grid staff-grid stagger">
+        <div className="staff-main stack">
           <div className="seg" role="tablist" aria-label="Account type">
             <button type="button" role="tab" aria-selected={tab === "staff"} onClick={() => setTab("staff")}>Staff accounts</button>
             <button type="button" role="tab" aria-selected={tab === "students"} onClick={() => setTab("students")}>Student accounts</button>
           </div>
-          {list.length === 0 ? <EmptyState glyph="students" title={tab === "staff" ? "No staff profiles yet" : "No student accounts yet"} reason={tab === "staff" ? "Create counsellor and Team Leader profiles so cases can be assigned." : "Student sign-ins are issued by staff when a student case is created."} /> : (
+          {tab === "students" && (
+            <FilterBar label="Find a student account">
+              <div className="input-wrap f-search"><Search aria-hidden /><label htmlFor={searchId} className="sr-only">Search student accounts</label><input id={searchId} className="input" type="search" placeholder="Search name or email (three characters or more)" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+            </FilterBar>
+          )}
+          {tab === "students" && students.error ? <ReadError error={students.error} onRetry={students.reload} />
+            : tab === "students" && students.loading ? <ListSkeleton label="Loading student accounts" />
+            : list.length === 0 ? <EmptyState glyph="students" title={tab === "staff" ? "No staff profiles yet" : term ? "No student accounts match" : "No student accounts yet"} reason={tab === "staff" ? "Create counsellor and Team Leader profiles so cases can be assigned." : term ? "Search for a different name or email." : "Student sign-ins are issued by staff when a student case is created."} /> : (
             phone ? (
-              <CardList items={list} keyOf={(u) => u.id} label={tab === "staff" ? "Staff accounts" : "Student accounts"} render={(u) => {
-                const openN = Object.values(cases).filter((c) => (tab === "staff" ? c.counsellorId === u.id : c.studentUserId === u.id) && c.status === "open").length;
-                const own = Object.values(cases).find((c) => c.studentUserId === u.id);
-                return (
-                  <div className="case-card">
-                    <div className="flex aic jcb g2"><span className="flex aic g2" style={{ minWidth: 0 }}><Avatar name={u.name} size={30} tone={u.role === "admin" ? "ink" : undefined} /><span className="ui small strong truncate">{u.name}</span></span><Pill tone={u.active ? "ok" : "bad"}>{u.active ? "Active" : "Deactivated"}</Pill></div>
-                    <p className="xs muted truncate">{ROLE_LABEL[u.role]} · {u.email}{u.phone ? ` · ${u.phone}` : ""}</p>
-                    <p className="xs muted">{tab === "staff" ? `${openN} open case${openN === 1 ? "" : "s"}` : own?.ref ?? "No case"} · {u.lastSignInAt ? `signed in ${fmtDateTime(u.lastSignInAt)}` : "never signed in"}</p>
-                    {(canAccount || (canDeactivate && u.id !== user?.id)) && (
-                      <div className="flex wrap g1">
-                        {canAccount && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPasswordFor(u)}><KeyRound aria-hidden />Temporary password</button>}
-                        {canDeactivate && u.id !== user?.id && <button type="button" className={`btn btn-sm ${u.active ? "btn-danger-ghost" : "btn-ghost"}`} onClick={() => toggle(u)}>{u.active ? <><UserRoundX aria-hidden />Deactivate</> : <><UserRoundCheck aria-hidden />Reactivate</>}</button>}
-                      </div>
-                    )}
-                  </div>
-                );
-              }} />
+              <CardList items={list} keyOf={(u) => u.id} label={tab === "staff" ? "Staff accounts" : "Student accounts"} render={(u) => (
+                <div className="case-card">
+                  <div className="flex aic jcb g2"><span className="flex aic g2" style={{ minWidth: 0 }}><Avatar name={u.name} size={30} tone={isPrivileged(u.role) ? "ink" : undefined} /><span className="ui small strong truncate">{u.name}</span></span><Pill tone={u.active ? "ok" : "bad"}>{u.active ? "Active" : "Deactivated"}</Pill></div>
+                  <p className="xs muted truncate">{ROLE_LABEL[u.role]} · {u.email}{u.phone ? ` · ${u.phone}` : ""}</p>
+                  <p className="xs muted">{tab === "staff" ? `${openLoad.get(u.id) ?? 0} open case${openLoad.get(u.id) === 1 ? "" : "s"}` : u.caseRef ?? "No case"} · {u.lastSignInAt ? `signed in ${fmtDateTime(u.lastSignInAt)}` : "never signed in"}</p>
+                  {(acts(u).password || acts(u).active || acts(u).role) && (
+                    <div className="flex wrap g1">
+                      {acts(u).role && tab === "staff" && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRoleFor(u)}><ShieldCheck aria-hidden />Change role</button>}
+                      {acts(u).password && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPasswordFor(u)}><KeyRound aria-hidden />Temporary password</button>}
+                      {acts(u).active && <button type="button" className={`btn btn-sm ${u.active ? "btn-danger-ghost" : "btn-ghost"}`} onClick={() => toggle(u)}>{u.active ? <><UserRoundX aria-hidden />Deactivate</> : <><UserRoundCheck aria-hidden />Reactivate</>}</button>}
+                    </div>
+                  )}
+                </div>
+              )} />
             ) : (
             <div className="panel table-wrap">
               <table className="tbl" style={{ minWidth: 760 }}>
                 <thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Contact</th><th scope="col">Branch</th><th scope="col" className="right">{tab === "staff" ? "Open cases" : "Case"}</th><th scope="col">Last sign-in</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
                 <tbody>
-                  {list.map((u) => {
-                    const open = Object.values(cases).filter((c) => (tab === "staff" ? c.counsellorId === u.id : c.studentUserId === u.id) && c.status === "open");
-                    const own = Object.values(cases).find((c) => c.studentUserId === u.id);
-                    return (
-                      <tr key={u.id}>
-                        <td><div className="flex aic g2"><Avatar name={u.name} size={30} tone={u.role === "admin" ? "ink" : undefined} /><span className="primary">{u.name}</span></div></td>
-                        <td>{ROLE_LABEL[u.role]}</td>
-                        <td><p>{u.email}</p><p className="sub">{u.phone || "—"}</p></td>
-                        <td>{u.branch || "—"}</td>
-                        <td className="right tnum">{tab === "staff" ? open.length : own?.ref ?? "—"}</td>
-                        <td className="muted nowrap">{u.lastSignInAt ? fmtDateTime(u.lastSignInAt) : "Never"}</td>
-                        <td><Pill tone={u.active ? "ok" : "bad"}>{u.active ? "Active" : "Deactivated"}</Pill></td>
-                        <td className="right nowrap">
-                          {canAccount && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPasswordFor(u)}><KeyRound aria-hidden />Set temporary password</button>}
-                          {canDeactivate && u.id !== user?.id && <button type="button" className={`btn btn-sm ${u.active ? "btn-danger-ghost" : "btn-ghost"}`} onClick={() => toggle(u)}>{u.active ? <><UserRoundX aria-hidden />Deactivate</> : <><UserRoundCheck aria-hidden />Reactivate</>}</button>}
-                          {!canAccount && !(canDeactivate && u.id !== user?.id) && <span className="muted">—</span>}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {list.map((u) => (
+                    <tr key={u.id}>
+                      <td><div className="flex aic g2"><Avatar name={u.name} size={30} tone={isPrivileged(u.role) ? "ink" : undefined} /><span className="primary">{u.name}</span></div></td>
+                      <td>{ROLE_LABEL[u.role]}</td>
+                      <td><p>{u.email}</p><p className="sub">{u.phone || "—"}</p></td>
+                      <td>{u.branch || "—"}</td>
+                      <td className="right tnum">{caseCell(u)}</td>
+                      <td className="muted nowrap">{u.lastSignInAt ? fmtDateTime(u.lastSignInAt) : "Never"}</td>
+                      <td><Pill tone={u.active ? "ok" : "bad"}>{u.active ? "Active" : "Deactivated"}</Pill></td>
+                      <td className="right nowrap">
+                        {acts(u).role && tab === "staff" && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRoleFor(u)} aria-label={`Change role of ${u.name}`}><ShieldCheck aria-hidden />Role</button>}
+                        {acts(u).password && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPasswordFor(u)} aria-label={`Set a temporary password for ${u.name}`}><KeyRound aria-hidden />Password</button>}
+                        {acts(u).active && <button type="button" className={`btn btn-sm ${u.active ? "btn-danger-ghost" : "btn-ghost"}`} onClick={() => toggle(u)} aria-label={`${u.active ? "Deactivate" : "Reactivate"} ${u.name}`}>{u.active ? <><UserRoundX aria-hidden />Deactivate</> : <><UserRoundCheck aria-hidden />Reactivate</>}</button>}
+                        {!acts(u).password && !acts(u).active && !acts(u).role && <span className="muted" aria-label={isPrivileged(u.role) ? "Managed by Super Admin" : "No actions"}>{isPrivileged(u.role) && user?.role !== "super_admin" ? "Super Admin managed" : "—"}</span>}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
             )
           )}
+          {tab === "students" && !students.loading && !students.error && <PageFooter shown={students.rows.length} hasMore={students.hasMore} loadingMore={students.loadingMore} onMore={students.loadMore} noun="accounts" />}
         </div>
         <div className="panel"><div className="panel-h"><h2>Active staff by role</h2></div><div className="panel-b">{byRole.length === 0 ? <EmptyState compact glyph="students" title="No staff yet" /> : <div className="flex g3 aic wrap"><Donut data={byRole} title="Active staff by role" size={130} stroke={20} centerSub="staff" /><div className="grow"><Legend data={byRole} /></div></div>}</div></div>
       </div>
       {creating && <CreateProfile onClose={() => setCreating(false)} />}
       {passwordFor && <SetTemporaryPassword u={passwordFor} onClose={() => setPasswordFor(null)} />}
+      {roleFor && <ChangeRoleDialog target={roleFor} onClose={() => setRoleFor(null)} />}
     </div>
   );
 }
 
 /**
  * Creates a staff profile and, with the account.write permission, issues its sign-in in the
- * same step. On a server the sign-in goes through the admin-users Edge Function; if that
+ * same step. On a server the sign-in goes through lpl-api's admin-users endpoint; if that
  * fails the profile is kept and the sign-in can be issued later from this page.
  */
 function CreateProfile({ onClose }: { onClose: () => void }) {
   const { user, audit, snap, can } = useSession();
   const toast = useToast();
   const canAccount = can("account.write");
-  const roles = ROLES.filter((r) => r.id !== "student");
+  const grantable = assignableRoles(user);
+  const roles = ROLES.filter((r) => r.id !== "student" && grantable.includes(r.id));
   const [f, setF] = useState({ name: "", email: "", phone: "", branch: snap.org.config.branches[0] ?? "", role: "counsellor" as Role, issue: true, password: "" });
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -149,11 +180,11 @@ function CreateProfile({ onClose }: { onClose: () => void }) {
     if (!user) return;
     setErr("");
     if (!f.name.trim() || !f.email.trim()) return setErr("Name and email are required.");
+    if (f.role === "super_admin" && !isGroupItEmail(f.email, await store.groupItDomains())) return setErr("Super Admin is restricted to Group IT email addresses.");
     if (issue) { const problem = passwordProblem(f.password); if (problem) return setErr(problem); }
     setBusy(true);
     try {
-    await store.refresh();
-    if (store.findUserByEmail(f.email)) { setBusy(false); return setErr("A profile with this email already exists."); }
+    if (await store.emailTaken(f.email)) { setBusy(false); return setErr("A profile with this email already exists."); }
     const server = store.server;
     // Browser storage keeps the hash on the profile. On a server the identity provider holds
     // the password and this field stays empty.
@@ -223,7 +254,7 @@ function CreateProfile({ onClose }: { onClose: () => void }) {
 
 /**
  * Sets a temporary password. Browser storage writes the hash to the profile; a server goes
- * through the admin-users Edge Function. A profile that has no sign-in yet (the function
+ * through lpl-api's admin-users endpoint. A profile that has no sign-in yet (the endpoint
  * answers 409) is offered "Create sign-in" instead, which issues one with the same password.
  */
 function SetTemporaryPassword({ u, onClose }: { u: User; onClose: () => void }) {
